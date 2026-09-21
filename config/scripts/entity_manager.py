@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Entity Manager for Energy Manager Update System v0.2.3
+Entity Manager for Energy Manager Update System v2.0.0
 Handles non-YAML entity updates via Home Assistant API
 """
 
