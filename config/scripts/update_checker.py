@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Read Energy Manager release metadata and files from a selected GitHub branch."""
 import json
 import logging
 import os
