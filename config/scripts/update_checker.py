@@ -34,6 +34,14 @@ def safe_repo_path(path):
     return path
 
 
+def manifest_source_path(path):
+    """Map a Home Assistant destination (or flow source) to the repo layout."""
+    path = safe_repo_path(path)
+    if path.startswith('share/') or path.startswith('nodered/'):
+        return path
+    return 'config/' + path
+
+
 class EnergyManagerUpdateChecker:
     def __init__(self, config_dir='/config', branch=None, repository=None):
         self.config_dir = config_dir
@@ -125,13 +133,13 @@ class EnergyManagerUpdateChecker:
         if data.get('version') != target_version:
             raise ValueError('Manifest version does not match latest.txt')
         for path, info in data['files'].items():
-            safe_repo_path(path)
+            manifest_source_path(path)
             if not isinstance(info, dict) or info.get('action', 'merge') not in ('merge', 'replace', 'create'):
                 raise ValueError(f'Invalid manifest entry for {path!r}')
             version_tuple(info.get('new_in_version', ''))
         flows = data.get('nodered_flows')
         if flows:
-            safe_repo_path(flows['download_url'])
+            manifest_source_path(flows['download_url'])
             version_tuple(flows['new_in_version'])
         return data
 
@@ -156,7 +164,7 @@ class EnergyManagerUpdateChecker:
 
     def download_file(self, remote_path, local_path):
         try:
-            payload = self._read(self._url(remote_path))
+            payload = self._read(self._url(manifest_source_path(remote_path)))
             if not payload:
                 raise ValueError(f'Empty GitHub file: {remote_path}')
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
