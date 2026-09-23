@@ -305,7 +305,7 @@
       "action": "replace",
       "description": "Update checker v2",
       "backup_current": true,
-      "new_in_version": "0.2,3"
+      "new_in_version": "0.2.3"
     },
     "scripts/file_merger.py": {
       "action": "replace",
