@@ -18,9 +18,9 @@ shell_command:
   check_config_files: "cd /config; ls -la *modbus.yaml*"
   get_available_version: "cat /config/.energy_manager/update_status.txt 2>/dev/null || echo 'unknown'"
   get_changelog_direct: 'python3 -c "import json; data=json.load(open(''/config/.energy_manager/update_details.json'')); print(data.get(''changelog'', ''No changelog available''))" 2>/dev/null || echo ''No changelog available'''
-  check_energy_manager_updates: bash -c 'python3 /config/scripts/check_energy_manager_updates.py --key "$1"' -- "{{ states('input_text.energymanager_key') }}"
-  perform_energy_manager_update: bash -c 'python3 /config/scripts/perform_energy_manager_update.py --key "$1"' -- "{{ states('input_text.energymanager_key') }}"
-  perform_energy_manager_update_force: bash -c 'python3 /config/scripts/perform_energy_manager_update.py --force-reinstall --key "$1"' -- "{{ states('input_text.energymanager_key') }}"
+  check_energy_manager_updates: bash -c 'python3 /config/scripts/check_energy_manager_updates.py'
+  perform_energy_manager_update: bash -c 'python3 /config/scripts/perform_energy_manager_update.py'
+  perform_energy_manager_update_force: bash -c 'python3 /config/scripts/perform_energy_manager_update.py --force-reinstall'
   generate_ssh_key: 'mkdir -p /config/.energy_manager && ssh-keygen -t ed25519 -f /config/.energy_manager/ssh_key -N "" -C "energy_manager_automation"'
   read_ssh_key: 'cat /config/.energy_manager/ssh_key.pub 2>/dev/null || echo "no_key"'
   em_victoriametrics_setup: "python3 /config/scripts/em_victoriametrics_setup.py"
