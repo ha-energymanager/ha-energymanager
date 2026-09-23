@@ -56,6 +56,10 @@ class EnergyManagerUpdateChecker:
 
     def resolve_branch(self, branch):
         if branch is None:
+            # The branch selector is introduced in 2.0.0. During manual
+            # migration from 1.x, always use main without querying Supervisor.
+            if version_tuple(self.get_current_version()) < version_tuple('2.0.0'):
+                return 'main'
             token = os.environ.get('SUPERVISOR_TOKEN')
             if token:
                 request = urllib.request.Request(
