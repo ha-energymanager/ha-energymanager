@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Check selected GitHub branch and write Home Assistant update status files."""
 import argparse
 import json
 import os
