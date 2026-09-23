@@ -314,6 +314,13 @@ input_select:
       - "Profile 4"
       - "Profile 5"
 
+  em_update_branch:
+    name: Energy Manager Update em_update_branch
+    options:
+      - "Main"
+      - "Development"
+    icon: mdi:github
+
   dynamic_reserve_strategy:
     name: Dynamic Battery Reserve Strategy
     options:
