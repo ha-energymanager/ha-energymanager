@@ -1,6 +1,6 @@
 {
-  "version": "1.2.1",
-  "changelog": "EV update. Energy card update. <br>Read <a href=https://updates.energymanager.com.au/changelog.txt>Changelog</a>!",
+  "version": "2.0.0",
+  "changelog": "Github release. <br>Read <a href=https://updates.energymanager.com.au/changelog.txt>Changelog</a>!",
   "restart_required": true,
   "generated_at": "2026-05-15T18:00:00Z",
   "files": {
