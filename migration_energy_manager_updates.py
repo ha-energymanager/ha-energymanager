@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Manually install the GitHub updater scripts."""
 import json
 import os
 import re
@@ -66,7 +67,7 @@ def migrate():
     # Download and validate everything before touching installed scripts.
     payloads = {}
     for path in FILES:
-        content = repository_bytes(sha, path)
+        content = repository_bytes(sha, 'config/' + path)
         compile(content.decode('utf-8'), path, 'exec')
         payloads[path] = content
 
