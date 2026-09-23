@@ -41,6 +41,7 @@ def main():
                           if isinstance(manifest.get(key), str)), '')
             write_outputs('update_available', result['remote_version'], notes, checker.branch)
             print(f"Update available on {checker.branch}: {result['current_version']} -> {result['remote_version']}")
+            return 1
         else:
             write_outputs('no_updates', result['current_version'], branch=checker.branch)
             print(f"No updates available on {checker.branch}")
@@ -48,7 +49,7 @@ def main():
     except Exception as exc:
         write_outputs('error', '', branch=args.branch or 'main', error=str(exc))
         print(f'Update check failed: {exc}', file=sys.stderr)
-        return 1
+        return 2
 
 
 if __name__ == '__main__':
