@@ -1189,110 +1189,110 @@ try:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-        print("Processing special file operations...")
-        update_dashboard_status("Processing special file operations...", "info")
-        special_files_success = handle_special_files(selected_manifest)
-        success &= special_files_success
+    print("Processing special file operations...")
+    update_dashboard_status("Processing special file operations...", "info")
+    special_files_success = handle_special_files(selected_manifest)
+    success &= special_files_success
 
-        print("Processing entity updates...")
-        update_dashboard_status("Processing entity updates...", "info")
-        entities_success = handle_entities_update(selected_manifest)
-        success &= entities_success
+    print("Processing entity updates...")
+    update_dashboard_status("Processing entity updates...", "info")
+    entities_success = handle_entities_update(selected_manifest)
+    success &= entities_success
 
-        print("Processing Lovelace resource updates...")
-        update_dashboard_status("Processing Lovelace resource updates...", "info")
-        lovelace_success = update_lovelace_resources(dict(manifest, lovelace_resources=[
-            resource for resource in manifest.get('lovelace_resources', [])
-            if args.force_reinstall or version_tuple(resource['new_in_version']) > installed_version]))
-        success &= lovelace_success
+    print("Processing Lovelace resource updates...")
+    update_dashboard_status("Processing Lovelace resource updates...", "info")
+    lovelace_success = update_lovelace_resources(dict(manifest, lovelace_resources=[
+        resource for resource in manifest.get('lovelace_resources', [])
+        if args.force_reinstall or version_tuple(resource['new_in_version']) > installed_version]))
+    success &= lovelace_success
+    
+    update_flows = ('nodered_flows' in manifest and
+                    (args.force_reinstall or version_tuple(manifest['nodered_flows']['new_in_version']) > installed_version))
+    if update_flows:
+        flows_info = manifest['nodered_flows']
+        download_url = flows_info.get('download_url')
         
-        update_flows = ('nodered_flows' in manifest and
-                        (args.force_reinstall or version_tuple(manifest['nodered_flows']['new_in_version']) > installed_version))
-        if update_flows:
-            flows_info = manifest['nodered_flows']
-            download_url = flows_info.get('download_url')
+        if download_url:
+            print("Processing Node-RED flows...")
+            update_dashboard_status("Updating Node-RED flows via SSH...", "info")
             
-            if download_url:
-                print("Processing Node-RED flows...")
-                update_dashboard_status("Updating Node-RED flows via SSH...", "info")
-                
-                flows_temp_path = '/config/.energy_manager/downloaded_flows.json'
-                
-                if update_checker.download_file(download_url, flows_temp_path):
-                    if validate_flows_json(flows_temp_path):
-                        with open(flows_temp_path, 'r') as f:
-                            new_flows_content = f.read()
-                        
-                        print("Updating Node-RED flows via SSH...")
-                        ssh_result = update_flows_via_ssh(new_flows_content, manifest['version'])
-                        
-                        if ssh_result:
-                            print("✓ Node-RED flows updated via SSH")
-                            if not REQUESTS_AVAILABLE:
-                                _restart_nodered_via_ssh()
-                        else:
-                            print("✗ SSH flows update failed")
-                            success = False
-                        
+            flows_temp_path = '/config/.energy_manager/downloaded_flows.json'
+            
+            if update_checker.download_file(download_url, flows_temp_path):
+                if validate_flows_json(flows_temp_path):
+                    with open(flows_temp_path, 'r') as f:
+                        new_flows_content = f.read()
+                    
+                    print("Updating Node-RED flows via SSH...")
+                    ssh_result = update_flows_via_ssh(new_flows_content, manifest['version'])
+                    
+                    if ssh_result:
+                        print("✓ Node-RED flows updated via SSH")
+                        if not REQUESTS_AVAILABLE:
+                            _restart_nodered_via_ssh()
                     else:
-                        print("✗ Downloaded Node-RED flows file is invalid JSON")
-                        update_dashboard_status("Downloaded Node-RED flows file is invalid JSON", "error")
+                        print("✗ SSH flows update failed")
                         success = False
                     
-                    if os.path.exists(flows_temp_path):
-                        os.remove(flows_temp_path)
                 else:
-                    print("✗ Failed to download Node-RED flows")
-                    update_dashboard_status("Failed to download Node-RED flows", "error")
+                    print("✗ Downloaded Node-RED flows file is invalid JSON")
+                    update_dashboard_status("Downloaded Node-RED flows file is invalid JSON", "error")
                     success = False
+                
+                if os.path.exists(flows_temp_path):
+                    os.remove(flows_temp_path)
             else:
-                print("✗ No download URL specified for Node-RED flows")
-                update_dashboard_status("No download URL specified for Node-RED flows", "error")
+                print("✗ Failed to download Node-RED flows")
+                update_dashboard_status("Failed to download Node-RED flows", "error")
                 success = False
-        
-        if success and update_flows:
-            print("Restarting Node-RED to pick up changes...")
-            update_dashboard_status("Restarting Node-RED...", "info")
-            
-            try:
-                if REQUESTS_AVAILABLE:
-                    url = "http://supervisor/addons/a0d7b954_nodered/restart"
-                    headers = {
-                        'Authorization': 'Bearer ' + os.environ.get('SUPERVISOR_TOKEN', ''),
-                        'Content-Type': 'application/json'
-                    }
-                    
-                    response = requests.post(url, headers=headers, timeout=30)
-                    
-                    if response.status_code == 200:
-                        print("✅ Node-RED restart initiated")
-                    else:
-                        print(f"❌ Node-RED restart failed: {response.status_code}")
-                        print("Please restart Node-RED manually")
-                        
-                else:
-                    print("⚠ Please restart Node-RED manually - requests not available")
-                    
-            except Exception as e:
-                print(f"❌ Node-RED restart error: {e}")
-                print("Please restart Node-RED manually")
-        
-        if success:
-            update_checker.set_current_version(manifest['version'])
-            with open('/config/.energy_manager/installed_branch.txt', 'w', encoding='utf-8') as f:
-                f.write(update_checker.branch + '\n')
-            print(f"✅ Update successful: {manifest['version']}")
-            update_status_success(manifest['version'])
-            
-            with open('/config/.energy_manager/update_result.txt', 'w') as f:
-                f.write(f"success:{manifest['version']}")
-            sys.exit(0)
         else:
-            print("❌ Update failed")
-            update_status_failed("One or more update steps failed")
-            with open('/config/.energy_manager/update_result.txt', 'w') as f:
-                f.write("failed")
-            sys.exit(1)
+            print("✗ No download URL specified for Node-RED flows")
+            update_dashboard_status("No download URL specified for Node-RED flows", "error")
+            success = False
+    
+    if success and update_flows:
+        print("Restarting Node-RED to pick up changes...")
+        update_dashboard_status("Restarting Node-RED...", "info")
+        
+        try:
+            if REQUESTS_AVAILABLE:
+                url = "http://supervisor/addons/a0d7b954_nodered/restart"
+                headers = {
+                    'Authorization': 'Bearer ' + os.environ.get('SUPERVISOR_TOKEN', ''),
+                    'Content-Type': 'application/json'
+                }
+                
+                response = requests.post(url, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    print("✅ Node-RED restart initiated")
+                else:
+                    print(f"❌ Node-RED restart failed: {response.status_code}")
+                    print("Please restart Node-RED manually")
+                    
+            else:
+                print("⚠ Please restart Node-RED manually - requests not available")
+                
+        except Exception as e:
+            print(f"❌ Node-RED restart error: {e}")
+            print("Please restart Node-RED manually")
+    
+    if success:
+        update_checker.set_current_version(manifest['version'])
+        with open('/config/.energy_manager/installed_branch.txt', 'w', encoding='utf-8') as f:
+            f.write(update_checker.branch + '\n')
+        print(f"✅ Update successful: {manifest['version']}")
+        update_status_success(manifest['version'])
+        
+        with open('/config/.energy_manager/update_result.txt', 'w') as f:
+            f.write(f"success:{manifest['version']}")
+        sys.exit(0)
+    else:
+        print("❌ Update failed")
+        update_status_failed("One or more update steps failed")
+        with open('/config/.energy_manager/update_result.txt', 'w') as f:
+            f.write("failed")
+        sys.exit(1)
 
 except Exception as e:
     print(f"Update process failed: {e}")
