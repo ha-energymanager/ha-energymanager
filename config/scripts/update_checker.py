@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 from pathlib import PurePosixPath
 
-REPOSITORY = os.environ.get('EM_UPDATE_REPOSITORY', 'saltpool/ha-energymanager')
+REPOSITORY = os.environ.get('EM_UPDATE_REPOSITORY', 'ha-energymanager/ha-energymanager')
 BRANCH_ENTITY = 'input_select.em_update_branch'
 VERSION_RE = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
 
@@ -57,10 +57,17 @@ class EnergyManagerUpdateChecker:
                 try:
                     with urllib.request.urlopen(request, timeout=10) as response:
                         branch = json.load(response).get('state')
+                except urllib.error.HTTPError as exc:
+                    if exc.code == 404:
+                        branch = 'main'  # The selector is introduced by release 2.0.0.
+                    else:
+                        raise RuntimeError(f'Cannot read {BRANCH_ENTITY}: {exc}') from exc
                 except (OSError, ValueError) as exc:
                     raise RuntimeError(f'Cannot read {BRANCH_ENTITY}: {exc}') from exc
             else:
                 branch = 'main'  # Outside HA, for manual invocation or tests.
+        if branch is None or str(branch).strip().lower() in ('unknown', 'unavailable'):
+            branch = 'main'
         branch = str(branch).strip().lower()
         if branch not in ('main', 'development'):
             raise ValueError(f'Invalid update branch: {branch!r}')
