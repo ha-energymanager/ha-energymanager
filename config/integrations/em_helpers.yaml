@@ -315,7 +315,7 @@ input_select:
       - "Profile 5"
 
   em_update_branch:
-    name: Energy Manager Update em_update_branch
+    name: Energy Manager Update Branch
     options:
       - "Main"
       - "Development"
