@@ -11,46 +11,12 @@ import uuid
 import glob
 from datetime import datetime, timedelta
 import argparse
-import re
-import urllib.request
-
-def bootstrap_checker_for_legacy_stage2():
-    """Complete the old updater's stage-two handoff before importing its checker."""
-    if '--self-update-stage2' not in sys.argv:
-        return
-    repository = os.environ.get('EM_UPDATE_REPOSITORY', 'saltpool/ha-energymanager')
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
-        raise ValueError('Invalid GitHub repository for migration')
-    url = f'https://raw.githubusercontent.com/{repository}/main/scripts/update_checker.py'
-    request = urllib.request.Request(url, headers={'User-Agent': 'EnergyManager-Updater'})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        data = response.read()
-    source = data.decode('utf-8')
-    if 'class EnergyManagerUpdateChecker' not in source:
-        raise ValueError('GitHub update checker is missing its expected class')
-    compile(source, url, 'exec')
-    target = '/config/scripts/update_checker.py'
-    backup_dir = '/config/.energy_manager/backups/legacy-github-transition'
-    os.makedirs(backup_dir, exist_ok=True)
-    if os.path.exists(target):
-        shutil.copy2(target, os.path.join(backup_dir, 'update_checker.py.bak'))
-    temp = target + '.github-bootstrap'
-    try:
-        with open(temp, 'wb') as file:
-            file.write(data)
-        os.replace(temp, target)
-    finally:
-        if os.path.exists(temp):
-            os.remove(temp)
-    print('Installed GitHub update checker for legacy stage-two transition')
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Energy Manager Update Script')
     parser.add_argument('--force-reinstall', action='store_true', help='Force reinstall of current version')
     parser.add_argument('--branch', choices=('main', 'development'), help='Override HA branch selector')
-    # The legacy updater invokes its replacement with these arguments. Accept
-    # them for the one-time migration; neither has a role in GitHub updates.
-    parser.add_argument('--self-update-stage2', action='store_true', help=argparse.SUPPRESS)
+    # Existing Home Assistant shell commands may still pass this; it is ignored.
     parser.add_argument('--key', default='', help=argparse.SUPPRESS)
     return parser.parse_args()
 
@@ -63,7 +29,6 @@ except ImportError:
 
 sys.path.append('/config/scripts')
 
-bootstrap_checker_for_legacy_stage2()
 from update_checker import EnergyManagerUpdateChecker, version_tuple
 from file_merger import EnergyManagerFileMerger
 
