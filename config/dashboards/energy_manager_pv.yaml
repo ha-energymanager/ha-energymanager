@@ -1922,6 +1922,7 @@ views:
                     name: Energy Manager API Version
                   - entity: input_text.timezone
                     name: Timezone (e.g., AEST or AEDT) (Required)
+                  - entity: input_select.em_update_branch
                   - entity: input_boolean.energy_flow_visual
                   - entity: input_boolean.enable_exclusion_period
               - type: conditional
