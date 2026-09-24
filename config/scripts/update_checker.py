@@ -10,7 +10,6 @@ import urllib.request
 from pathlib import PurePosixPath
 
 REPOSITORY = os.environ.get('EM_UPDATE_REPOSITORY', 'ha-energymanager/ha-energymanager')
-BRANCH_ENTITY = 'input_select.em_update_branch'
 VERSION_RE = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
 
 
@@ -55,31 +54,11 @@ class EnergyManagerUpdateChecker:
         self.target_sha = None
 
     def resolve_branch(self, branch):
-        if branch is None:
-            # The branch selector is introduced in 2.0.0. During manual
-            # migration from 1.x, always use main without querying Supervisor.
-            if version_tuple(self.get_current_version()) < version_tuple('2.0.0'):
-                return 'main'
-            token = os.environ.get('SUPERVISOR_TOKEN')
-            if token:
-                request = urllib.request.Request(
-                    f'http://supervisor/core/api/states/{BRANCH_ENTITY}',
-                    headers={'Authorization': 'Bearer ' + token})
-                try:
-                    with urllib.request.urlopen(request, timeout=10) as response:
-                        branch = json.load(response).get('state')
-                except urllib.error.HTTPError as exc:
-                    if exc.code == 404:
-                        branch = 'main'  # The selector is introduced by release 2.0.0.
-                    else:
-                        raise RuntimeError(f'Cannot read {BRANCH_ENTITY}: {exc}') from exc
-                except (OSError, ValueError) as exc:
-                    raise RuntimeError(f'Cannot read {BRANCH_ENTITY}: {exc}') from exc
-            else:
-                branch = 'main'  # Outside HA, for manual invocation or tests.
-        if branch is None or str(branch).strip().lower() in ('unknown', 'unavailable'):
+        # The Home Assistant shell command passes the selector explicitly.
+        # CLI checks without --branch (including older HA templates) use main.
+        branch = str(branch or 'main').strip().lower()
+        if branch in ('unknown', 'unavailable'):
             branch = 'main'
-        branch = str(branch).strip().lower()
         if branch not in ('main', 'development'):
             raise ValueError(f'Invalid update branch: {branch!r}')
         return branch
