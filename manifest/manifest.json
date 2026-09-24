@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "changelog": "Github release. <br>Read <a href=https://updates.energymanager.com.au/changelog.txt>Changelog</a>!",
+  "changelog": "Github release. <br>Always reboot Home Assistant after an update!",
   "restart_required": true,
   "generated_at": "2026-05-15T18:00:00Z",
   "files": {
