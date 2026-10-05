@@ -1,4 +1,4 @@
-# scripts.yaml 
+# em_scripts.yaml 
 # === ENERGY_MANAGER_SCRIPTS_START v1.3.0 ===
 script:
   switch_inverter_brand:
@@ -11,17 +11,17 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "sungrow"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting Sungrow Activation"
                   message: "Activating Sungrow configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_sungrow
+              - action: shell_command.switch_to_sungrow
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
           - conditions:
@@ -29,17 +29,17 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "sigenergy"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting Sigenergy Activation"
                   message: "Activating Sigenergy configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_sigenergy
+              - action: shell_command.switch_to_sigenergy
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
           - conditions:
@@ -47,17 +47,17 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "alphaess"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting AlphaESS Activation"
                   message: "Activating AlphaESS configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_alphaess
+              - action: shell_command.switch_to_alphaess
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
           - conditions:
@@ -65,17 +65,17 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "goodwe"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting Goodwe Activation"
                   message: "Activating Goodwe configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_goodwe
+              - action: shell_command.switch_to_goodwe
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
           - conditions:
@@ -83,17 +83,17 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "goodwe_et"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting Goodwe ET Activation"
                   message: "Activating Goodwe ET configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_goodwe_et
+              - action: shell_command.switch_to_goodwe_et
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
           - conditions:
@@ -101,7 +101,7 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "goodwe_int"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Goodwe integration Activation"
                   message: "Activated Goodwe integration-based configuration."
@@ -111,17 +111,17 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "fronius"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting Fronius Activation"
                   message: "Activating Fronius configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_fronius
+              - action: shell_command.switch_to_fronius
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
           - conditions:
@@ -129,20 +129,20 @@ script:
                 entity_id: input_select.inverter_brand
                 state: "solaredge"
             sequence:
-              - service: persistent_notification.create
+              - action: persistent_notification.create
                 data:
                   title: "Starting SolarEdge Activation"
                   message: "Activating SolarEdge configuration... Please wait."
                   notification_id: manual_activation_progress
               - delay: "00:00:01"
-              - service: shell_command.switch_to_solaredge
+              - action: shell_command.switch_to_solaredge
               - delay: "00:00:01"
-              - service: shell_command.check_config_files
+              - action: shell_command.check_config_files
               - delay: "00:00:01"
-              - service: input_boolean.turn_on
+              - action: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual {{ states('input_select.inverter_brand') | title }} Activation Complete"
           message: >
@@ -173,7 +173,7 @@ script:
                     {% else %}
                       0
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -191,7 +191,7 @@ script:
                     {% else %}
                       1
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   unit: 247
@@ -209,7 +209,7 @@ script:
                     {% else %}
                       0
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -227,7 +227,7 @@ script:
                     {% elif mode_text == 'External EMS' %}
                       3
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -251,7 +251,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sungrow_inverter
                           unit: !secret modbus_slave
@@ -261,7 +261,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sungrow_inverter
                           unit: !secret modbus_slave
@@ -271,14 +271,14 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sungrow_inverter
                           unit: !secret modbus_slave
                           address: 13050 # Charge/discharge command
                           value: 187 # Discharge (0xBB)
                 default:
-                  - service: system_log.write
+                  - action: system_log.write
                     data:
                       message: "Unknown Sungrow mode option: {{ option }}"
                       level: warning
@@ -291,14 +291,14 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sigenergy_inverter
                           unit: 247
                           address: 40029 # (EMS mode)
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sigenergy_inverter
                           unit: 247
@@ -309,14 +309,14 @@ script:
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sigenergy_inverter
                           unit: 247
                           address: 40029 # (EMS mode)
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sigenergy_inverter
                           unit: 247
@@ -327,14 +327,14 @@ script:
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sigenergy_inverter
                           unit: 247
                           address: 40029 # (EMS mode)
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: sigenergy_inverter
                           unit: 247
@@ -350,13 +350,13 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
                           address: 0x0880 # Dispatch Start
                           value: 0 # Disable dispatch
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -365,7 +365,7 @@ script:
                             - 0
                             - 32000
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -375,14 +375,14 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
                           address: 0x0880 # Dispatch Start
                           value: 1 # Enable dispatch
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -390,13 +390,13 @@ script:
                           value:
                             - "{{ (32000 - states('input_number.inverter_charge_discharge_power') | int) // 65536 }}"
                             - "{{ (32000 - states('input_number.inverter_charge_discharge_power') | int) % 65536 }}"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
                           address: 0x0886 # Dispatch SOC (0.4%/bit) (0886H)
                           value: "{{ (states('input_number.inverter_max_soc') | int) / 0.4 }}"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -405,7 +405,7 @@ script:
                             - 0
                             - 10800 # 3hrs
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -415,13 +415,13 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
                           address: 0x0880 # Dispatch Start (0880H)
                           value: 1 # Enable dispatch
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -430,14 +430,14 @@ script:
                             - "{{ (states('input_number.inverter_charge_discharge_power') | int + 32000) // 65536 }}"
                             - "{{ (states('input_number.inverter_charge_discharge_power') | int + 32000) % 65536 }}"
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
                           address: 0x0886 # Dispatch SOC (0.4%/bit) (0886H)
                           value: "{{ (states('input_number.inverter_min_soc') | int) / 0.4 }}"
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -446,7 +446,7 @@ script:
                             - 0
                             - 10800 # 3hrs
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: alphaess_inverter
                           unit: !secret modbus_slave
@@ -468,34 +468,34 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_start }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_end }}"
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_week }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_power
                         data:
                           value: 0
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_inverter_operation_mode
                         data:
@@ -504,7 +504,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_power
                         data:
@@ -517,33 +517,33 @@ script:
                               {{ [0, [100, (max / hard * 100)] | min] | max | round(0) }}
                             {% endif %}
                       - delay: "00:00:01"
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_soc
                         data:
                           value: "{{ states('input_number.inverter_max_soc') | int }}"
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_inverter_operation_mode
                         data:
                           option: eco_charge
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_start }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_end }}"
                           value: 5947
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -553,7 +553,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_power
                         data:
@@ -566,33 +566,33 @@ script:
                               {{ [0, [100, (max / hard * 100)] | min] | max | round(0) }}
                             {% endif %}
                       - delay: "00:00:01"
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_soc
                         data:
                           value: "{{ states('input_number.inverter_min_soc') | int }}"
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_inverter_operation_mode
                         data:
                           option: eco_discharge
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_start }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ addr_end }}"
                           value: 5947
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -615,42 +615,42 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47612
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a3 }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a2 }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a0 }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a1 }}"
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -660,47 +660,47 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47511
                           value: 4
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_soc
                         data:
                           value: "{{ (states('input_number.inverter_max_soc') | int) }}"
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47612
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47612
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a0 }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a1 }}"
                           value: 5947
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -716,7 +716,7 @@ script:
                               {{ 65536 - p }}
                             {% endif %}
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -726,48 +726,48 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47511
                           value: 3
                       - delay: "00:00:01"
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_soc
                         data:
                           value: "{{ states('input_number.inverter_min_soc') | int }}"
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47612
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: 47612
                           value: 1
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a0 }}"
                           value: 0
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
                           address: "{{ a1 }}"
                           value: 5947
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -783,7 +783,7 @@ script:
                               {{ p }}
                             {% endif %}
                       - delay: "00:00:01"
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: goodwe_inverter
                           unit: !secret modbus_slave
@@ -798,12 +798,12 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_inverter_operation_mode
                         data:
                           option: general
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_ems_mode
                         data:
@@ -812,25 +812,25 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_soc
                         data:
                           value: "{{ states('input_number.inverter_max_soc') | int }}"
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_inverter_operation_mode
                         data:
                           option: eco_charge
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_ems_mode
                         data:
                           option: charge_battery
                       - delay: "00:00:01"
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_ems_power_limit
                         data:
@@ -842,25 +842,25 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_eco_mode_soc
                         data:
                           value: "{{ states('input_number.inverter_min_soc') | int }}"
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_inverter_operation_mode
                         data:
                           option: eco_discharge
                       - delay: "00:00:01"
-                      - service: select.select_option
+                      - action: select.select_option
                         target:
                           entity_id: select.goodwe_ems_mode
                         data:
                           option: discharge_battery
                       - delay: "00:00:01"
-                      - service: number.set_value
+                      - action: number.set_value
                         target:
                           entity_id: number.goodwe_ems_power_limit
                         data:
@@ -878,7 +878,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -887,13 +887,13 @@ script:
                             {% set w = states('sensor.fronius_wchamax') | float(0) %}
                             {% set sf = states('sensor.fronius_max_charging_power_sf') | int(0) %}
                             {{ (w / (10 ** sf)) | round(0) | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
                           address: 40358 # StorCtl_Mod
                           value: 0
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -902,7 +902,7 @@ script:
                             {% set sf = states('sensor.fronius_max_charging_discharging_percent_sf') | int(-2) %}
                             {% set raw_100 = 100 * (10 ** (-sf)) %}
                             {{ raw_100 | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -911,7 +911,7 @@ script:
                             {% set sf = states('sensor.fronius_max_charging_discharging_percent_sf') | int(-2) %}
                             {% set raw_100 = 100 * (10 ** (-sf)) %}
                             {{ raw_100 | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -928,7 +928,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -937,13 +937,13 @@ script:
                             {% set user_max_w = states('input_number.inverter_max_charge_power') | float(0) %}
                             {% set sf = states('sensor.fronius_max_charging_power_sf') | int(0) %}
                             {{ (user_max_w / (10 ** sf)) | round(0) | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
                           address: 40358 # StorCtl_Mod
                           value: 2
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -961,7 +961,7 @@ script:
                             {% set part = [part, 0] | max %}
                             {% set part = [part, raw_100] | min %}
                             {{ (65536 - part) | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -979,7 +979,7 @@ script:
                             {% set part = [part, 0] | max %}
                             {% set part = [part, raw_100] | min %}
                             {{ part | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -995,7 +995,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -1004,13 +1004,13 @@ script:
                             {% set user_max_w = states('input_number.inverter_max_charge_power') | float(0) %}
                             {% set sf = states('sensor.fronius_max_charging_power_sf') | int(0) %}
                             {{ (user_max_w / (10 ** sf)) | round(0) | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
                           address: 40358 # StorCtl_Mod
                           value: 3
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -1028,7 +1028,7 @@ script:
                             {% set part = [part, 0] | max %}
                             {% set part = [part, raw_100] | min %}
                             {{ (65536 - part) | int }}
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: fronius_inverter
                           unit: !secret modbus_slave
@@ -1055,7 +1055,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Stop' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1065,7 +1065,7 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Charge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1075,14 +1075,14 @@ script:
                       - condition: template
                         value_template: "{{ option == 'Forced Discharge' }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
                           address: 57357 # 0xE00D - Remote Control Command Mode
                           value: 4 # 4 = Maximize export (forced discharge)
         default:
-          - service: system_log.write
+          - action: system_log.write
             data:
               message: "Unknown inverter brand: {{ states('input_select.inverter_brand') }}"
               level: error
@@ -1097,7 +1097,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ (states('input_number.inverter_min_soc') | float * 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1109,7 +1109,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ (states('input_number.inverter_min_soc') | float * 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   unit: 247
@@ -1121,7 +1121,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ states('input_number.inverter_min_soc') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1131,7 +1131,7 @@ script:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
             sequence:
-              - service: system_log.write
+              - action: system_log.write
                 data:
                   message: "Fronius Min SOC setting not supported."
                   level: warning
@@ -1141,7 +1141,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ states('input_number.inverter_min_soc') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1158,7 +1158,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ (states('input_number.inverter_max_soc') | float * 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1170,7 +1170,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ (states('input_number.inverter_max_soc') | float * 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   unit: 247
@@ -1182,7 +1182,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ states('input_number.inverter_max_soc') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1192,7 +1192,7 @@ script:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
             sequence:
-              - service: system_log.write
+              - action: system_log.write
                 data:
                   message: "Fronius Max SOC setting not supported."
                   level: warning
@@ -1207,7 +1207,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ states('input_number.inverter_reserved_soc_backup') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1219,7 +1219,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ (states('input_number.inverter_reserved_soc_backup') | float * 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   unit: 247
@@ -1231,7 +1231,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ states('input_number.inverter_min_soc') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1243,7 +1243,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ (states('input_number.inverter_reserved_soc_backup') | float * 100) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1255,7 +1255,7 @@ script:
             sequence:
               - variables:
                   soc_value: "{{ states('input_number.inverter_min_soc') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1272,7 +1272,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_charge_discharge_power') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1284,13 +1284,13 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_charge_discharge_power') | float }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
                   address: 40029
                   value: 1 # Enable Remote EMS
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
@@ -1298,7 +1298,7 @@ script:
                   value:
                     - "{{ (power_value // 65536) | int }}"
                     - "{{ (power_value % 65536) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
@@ -1313,7 +1313,7 @@ script:
               # AlphaESS uses time-based control rather than direct power setting Set dispatch mode for power control
               - variables:
                   power_value: "{{ states('input_number.inverter_charge_discharge_power') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1329,7 +1329,7 @@ script:
                   power_value: "{{ states('input_number.inverter_charge_discharge_power') | int }}"
                   maximum_power: "{{ states('input_number.battery_charge_power_hardlimit') | int }}"
                   power_percentage: "{{ (power_value / maximum_power * 100) }}"
-              - service: number.set_value
+              - action: number.set_value
                 target:
                   entity_id: number.goodwe_eco_mode_power
                 data:
@@ -1354,11 +1354,11 @@ script:
                   - condition: template
                     value_template: "{{ power_limit != clamped_power }}"
                 then:
-                  - service: system_log.write
+                  - action: system_log.write
                     data:
                       message: "Power limit {{ power_limit }}W exceeds hardware/user limit {{ hw_limit }}W, clamped to {{ clamped_power }}W"
                       level: warning
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1370,7 +1370,7 @@ script:
                     {% set pct = [pct, 100] | min %}
                     {# InOutWRte_SF = -2 -> raw = pct * 100 #}
                     {{ (pct * 100) | int }}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1387,14 +1387,14 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_charge_discharge_power') | float }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
                   address: 57358 # 0xE00E - Remote Control Charge Limit (Float32, W)
                   value: "{{ power_value }}"
 
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1411,7 +1411,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ (states('input_number.inverter_max_charge_power') | float / 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1423,7 +1423,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_max_charge_power') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
@@ -1438,7 +1438,7 @@ script:
               - variables:
                   power_value: "{{ states('input_number.inverter_max_charge_power') | int }}"
                   dispatch_value: "{{ 32000 - power_value }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1452,7 +1452,7 @@ script:
                   power_value: "{{ states('input_number.inverter_max_charge_power') | int }}"
                   maximum_power: "{{ states('input_number.battery_charge_power_hardlimit') | int }}"
                   power_percentage: "{{ (power_value / maximum_power * 100) }}"
-              - service: number.set_value
+              - action: number.set_value
                 target:
                   entity_id: number.goodwe_eco_mode_power
                 data:
@@ -1470,7 +1470,7 @@ script:
                     {% set val = [val, 100] | min %}
                     {{ val }}
                   raw: "{{ (pct * 100) | int }}" # SF = -2 → ×100
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1482,7 +1482,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_max_charge_power') | float }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1499,7 +1499,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ (states('input_number.inverter_max_discharge_power') | float / 10) | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1511,7 +1511,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_max_discharge_power') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
@@ -1526,7 +1526,7 @@ script:
               - variables:
                   power_value: "{{ states('input_number.inverter_max_discharge_power') | int }}"
                   dispatch_value: "{{ 32000 + power_value }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1540,7 +1540,7 @@ script:
                   power_value: "{{ states('input_number.inverter_max_discharge_power') | int }}"
                   maximum_power: "{{ states('input_number.battery_discharge_power_hardlimit') | int }}"
                   power_percentage: "{{ (power_value / maximum_power * 100) }}"
-              - service: number.set_value
+              - action: number.set_value
                 target:
                   entity_id: number.goodwe_eco_mode_power
                 data:
@@ -1558,7 +1558,7 @@ script:
                     {% set val = [val, 100] | min %}
                     {{ val }}
                   raw: "{{ (pct * 100) | int }}" # SF = -2 → ×100
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1570,7 +1570,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_max_discharge_power') | float }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1587,7 +1587,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_pv_power_limit') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
@@ -1608,7 +1608,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_export_power_limit_input') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1621,7 +1621,7 @@ script:
               # Sigenergy uses plant-level grid point maximum export limitation
               - variables:
                   power_value: "{{ states('input_number.inverter_export_power_limit_input') | int }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sigenergy_inverter
                   slave: 247
@@ -1642,13 +1642,13 @@ script:
                   power_percentage: "{{ ((safe_power_watts / max_export_power) * 100) | round(0) | int }}"
                   # Ensure percentage is between 0-100 (should be 0-100 now due to safety cap)
                   final_percentage: "{{ [0, [power_percentage, 100] | min] | max }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
                   address: 0x0800 # MAX Feed into grid percent (0800H)
                   value: "{{ final_percentage }}"
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: alphaess_inverter
                   unit: !secret modbus_slave
@@ -1660,7 +1660,7 @@ script:
             sequence:
               - variables:
                   power_value: "{{ states('input_number.inverter_export_power_limit_input') | int }}"
-              - service: number.set_value
+              - action: number.set_value
                 target:
                   entity_id: number.goodwe_grid_export_limit
                 data:
@@ -1756,13 +1756,13 @@ script:
                     {% set raw = [raw, raw_100] | min %}
                     {{ raw | round(0) | int }}
 
-              - service: input_number.set_value
+              - action: input_number.set_value
                 target:
                   entity_id: input_number.wmaxlimpct
                 data:
                   value: "{{ new_limit_pct | float(0) }}"
 
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1771,7 +1771,7 @@ script:
 
               - delay: "00:00:01"
 
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1780,7 +1780,7 @@ script:
 
               - delay: "00:00:01"
 
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1794,7 +1794,7 @@ script:
                   w: "{{ states('input_number.inverter_export_power_limit_input') | int(0) }}"
 
               # One-time setup (safe to repeat)
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1802,7 +1802,7 @@ script:
                   value: [0, 1] # write 2 regs via FC16 (0x10)
               - delay: "00:00:01"
 
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1814,7 +1814,7 @@ script:
               - choose:
                   - conditions: "{{ w == 0 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1823,7 +1823,7 @@ script:
 
                   - conditions: "{{ w == 100 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1832,7 +1832,7 @@ script:
 
                   - conditions: "{{ w == 500 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1841,7 +1841,7 @@ script:
 
                   - conditions: "{{ w == 1000 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1850,7 +1850,7 @@ script:
 
                   - conditions: "{{ w == 2500 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1859,7 +1859,7 @@ script:
 
                   - conditions: "{{ w == 3150 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1868,7 +1868,7 @@ script:
 
                   - conditions: "{{ w == 5000 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1877,7 +1877,7 @@ script:
 
                   - conditions: "{{ w == 6300 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1886,7 +1886,7 @@ script:
 
                   - conditions: "{{ w == 7500 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1895,7 +1895,7 @@ script:
 
                   - conditions: "{{ w == 10000 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1904,7 +1904,7 @@ script:
 
                   - conditions: "{{ w == 15000 }}"
                     sequence:
-                      - service: modbus.write_register
+                      - action: modbus.write_register
                         data:
                           hub: solaredge_inverter
                           unit: !secret modbus_slave
@@ -1918,7 +1918,7 @@ script:
               - delay: "00:00:01"
 
               # Commit (required)
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -1940,7 +1940,7 @@ script:
                     {% else %}
                       85
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: sungrow_inverter
                   unit: !secret modbus_slave
@@ -1951,7 +1951,7 @@ script:
                 value_template: "{{ states('input_select.inverter_brand') == 'sigenergy' }}"
             sequence:
               # Sigenergy export power limits are always active when set The enable/disable is implicit through setting the limit value
-              - service: system_log.write
+              - action: system_log.write
                 data:
                   message: "Sigenergy export power limit enable/disable is implicit through limit value setting"
                   level: info
@@ -1961,7 +1961,7 @@ script:
             sequence:
               - variables:
                   enabled_state: "{{ states('input_boolean.inverter_export_power_limit_enabled_input') }}"
-              - service: "switch.turn_{{ enabled_state }}"
+              - action: "switch.turn_{{ enabled_state }}"
                 target:
                   entity_id: switch.goodwe_grid_export_limit_switch
           - conditions:
@@ -1975,7 +1975,7 @@ script:
                     {% else %}
                       0
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: fronius_inverter
                   unit: !secret modbus_slave
@@ -1992,7 +1992,7 @@ script:
                     {% else %}
                       0
                     {% endif %}
-              - service: modbus.write_register
+              - action: modbus.write_register
                 data:
                   hub: solaredge_inverter
                   unit: !secret modbus_slave
@@ -2022,21 +2022,21 @@ script:
             - variables:
                 i: "{{ repeat.index }}"
                 base8: "{{ 47547 + (i - 1) * 6 }}"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
                 address: "{{ base8 + 0 }}"
                 value: 0
             - delay: "00:00:01"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
                 address: "{{ base8 + 1 }}"
                 value: 1
             - delay: "00:00:01"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
@@ -2046,7 +2046,7 @@ script:
   goodwe_reset_all_4slots:
     alias: "GoodWe ET/ESA: Reset all 4 schedule slots"
     sequence:
-      - service: modbus.write_register
+      - action: modbus.write_register
         data:
           hub: goodwe_inverter
           unit: !secret modbus_slave
@@ -2059,28 +2059,28 @@ script:
             - variables:
                 i: "{{ repeat.index }}"
                 base4: "{{ 47515 + (i - 1) * 4 }}"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
                 address: "{{ base4 + 3 }}"
                 value: 0
             - delay: "00:00:01"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
                 address: "{{ base4 + 2 }}"
                 value: 0
             - delay: "00:00:01"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
                 address: "{{ base4 + 0 }}"
                 value: 0
             - delay: "00:00:01"
-            - service: modbus.write_register
+            - action: modbus.write_register
               data:
                 hub: goodwe_inverter
                 unit: !secret modbus_slave
@@ -2091,9 +2091,9 @@ script:
     alias: "Debug Modbus Files"
     description: "Check what modbus files exist and their contents"
     sequence:
-      - service: shell_command.list_modbus_files
+      - action: shell_command.list_modbus_files
       - delay: "00:00:02"
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Modbus Files Debug Complete"
           message: >
@@ -2103,9 +2103,9 @@ script:
     alias: "Test Shell Commands"
     description: "Test if shell commands work"
     sequence:
-      - service: shell_command.test_shell
+      - action: shell_command.test_shell
       - delay: "00:00:02"
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Shell Test Complete"
           message: >
@@ -2120,7 +2120,7 @@ script:
           brand: "{{ states('input_select.inverter_brand') }}"
       - condition: template
         value_template: "{{ brand in ['sungrow', 'sigenergy', 'alphaess', 'goodwe', 'goodwe_et', 'goodwe_int', 'fronius', 'solaredge'] }}"
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/pv_power/state"
           payload: >
@@ -2162,7 +2162,7 @@ script:
               {{ additional | round(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/pv_power_limit/state"
           payload: >
@@ -2170,7 +2170,7 @@ script:
               {{ states('sensor.sigenergy_pv_max_power_limit') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/grid_power/state"
           payload: >
@@ -2195,7 +2195,7 @@ script:
                  * (10 ** (states('sensor.solaredge_meter_power_sf') | int(0))) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_power/state"
           payload: >
@@ -2299,7 +2299,7 @@ script:
             {% elif brand == 'solaredge' %}
               {{ states('sensor.solaredge_battery_power') | float(0) }}
             {% endif %}
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/load_power/state"
           payload: >
@@ -2357,7 +2357,7 @@ script:
               0
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/import_power/state"
           payload: >
@@ -2398,7 +2398,7 @@ script:
               0
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/export_power/state"
           payload: >
@@ -2439,7 +2439,7 @@ script:
               0
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_charging_power/state"
           payload: >
@@ -2460,7 +2460,7 @@ script:
               {{ max(0, battery_power) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_discharging_power/state"
           payload: >
@@ -2482,7 +2482,7 @@ script:
             {% endif %}
           retain: true
       # Publish Battery Data
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_level/state"
           payload: >
@@ -2507,7 +2507,7 @@ script:
               {{ states('sensor.solaredge_battery_soe') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_capacity/state"
           payload: >
@@ -2532,7 +2532,7 @@ script:
               {{ states('sensor.solaredge_battery_max_energy') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_soh/state"
           payload: >
@@ -2557,7 +2557,7 @@ script:
             {% endif %}
           # Fronius does not support SOH through their modbus implementation
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/internal_temperature/state"
           payload: >
@@ -2583,7 +2583,7 @@ script:
               {{ (temp_raw * (10 ** sf_temp)) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_temperature/state"
           payload: >
@@ -2638,7 +2638,7 @@ script:
             {% elif brand == 'solaredge' %}
               {{ states('sensor.solaredge_battery_max_energy') | float(0) }}
             {% endif %}
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_charge/state"
           payload: >
@@ -2657,7 +2657,7 @@ script:
             {% endif %}
           retain: true
       # Publish Energy Data (Daily)
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/daily_battery_charge/state"
           payload: >
@@ -2675,7 +2675,7 @@ script:
           retain: true
           # Fronius does not track daily battery charge
           # SolarEdge does not track daily battery charge
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/daily_battery_discharge/state"
           payload: >
@@ -2700,7 +2700,7 @@ script:
           # Fronius does not track daily battery discharge
           # SolarEdge does not track daily battery discharge
       # Publish Energy Data (Total)
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/total_battery_charge/state"
           payload: >
@@ -2718,7 +2718,7 @@ script:
             {% endif %}
           # SolarEdge does not track total battery charge
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/total_battery_discharge/state"
           payload: >
@@ -2742,7 +2742,7 @@ script:
             {% endif %}
           # SolarEdge does not track total battery discharge
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/total_generated_energy/state"
           payload: >
@@ -2768,7 +2768,7 @@ script:
             {% endif %}
           retain: true
           # Goodwe does not track total generated energy
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/daily_pv_generation/state"
           payload: >
@@ -2791,7 +2791,7 @@ script:
             {% endif %}
           # SolarEdge does not support daily pv generation total
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/model/state"
           payload: >
@@ -2809,7 +2809,7 @@ script:
               {{ states('sensor.solaredge_device_model') | string }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/serial/state"
           payload: >
@@ -2827,7 +2827,7 @@ script:
               {{ states('sensor.solaredge_inverter_serial_number') | string }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/firmware/state"
           payload: >
@@ -2845,7 +2845,7 @@ script:
               {{ states('sensor.solaredge_firmware_version') | string }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/ems_mode_text/state"
           payload: >
@@ -2868,7 +2868,7 @@ script:
             {% endif %}
           # SolarEdge does not support the EMS Mode description
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/ems_charge_discharge_command/state"
           payload: >
@@ -2892,49 +2892,49 @@ script:
             {% endif %}
           retain: true
       # Publish Current Control Settings (from input helpers - user adjustable)
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/max_soc/state"
           payload: "{{ states('input_number.inverter_max_soc') | float(100) }}"
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/min_soc/state"
           payload: "{{ states('input_number.inverter_min_soc') | float(10) }}"
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_forced_power/state"
           payload: "{{ states('input_number.inverter_charge_discharge_power') | float(0) }}"
           retain: true
       # Additional control settings
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/reserved_soc_backup/state"
           payload: "{{ states('input_number.inverter_reserved_soc_backup') | float(0) }}"
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/max_charge_power/state"
           payload: "{{ states('input_number.inverter_max_charge_power') | float(0) }}"
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/max_discharge_power/state"
           payload: "{{ states('input_number.inverter_max_discharge_power') | float(0) }}"
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/export_power_limit/state"
           payload: "{{ states('input_number.inverter_export_power_limit_input') | float(0) }}"
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/export_power_limit_enabled/state"
           payload: "{{ 'true' if is_state('input_boolean.inverter_export_power_limit_enabled', 'on') else 'false' }}"
           retain: true
       # Publish actual inverter values for comparison (read-only from modbus)
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_min_soc/state"
           payload: >
@@ -2952,7 +2952,7 @@ script:
             {% endif %}
           retain: true
           # Goodwe has no min or max SoC, just a target
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_max_soc/state"
           payload: >
@@ -2971,7 +2971,7 @@ script:
           # Fronius does not support a max soc modbus setting
           # Goodwe has no min or max SoC, just a target
           # SolarEdge has no min or max SoC, only SoE
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_charge_discharge_power/state"
           payload: >
@@ -2988,7 +2988,7 @@ script:
               {{ states('sensor.solaredge_battery_power') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_reserved_soc_backup/state"
           payload: >
@@ -3007,7 +3007,7 @@ script:
               {{ states('sensor.solaredge_reserved_soc') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_max_charge_power/state"
           payload: >
@@ -3043,7 +3043,7 @@ script:
               {{ states('sensor.solaredge_storage_charge_limit') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_max_discharge_power/state"
           payload: >
@@ -3072,7 +3072,7 @@ script:
               {{ states('sensor.solaredge_storage_discharge_limit') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_export_power_limit/state"
           payload: >
@@ -3091,7 +3091,7 @@ script:
               {{ states('sensor.solaredge_export_power_limit') | float(0) }}
             {% endif %}
           retain: true
-      - service: mqtt.publish
+      - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_export_power_limit_enabled/state"
           payload: >
@@ -3113,24 +3113,24 @@ script:
     alias: "Manual Activate Sungrow"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting Sungrow Activation"
           message: "Activating Sungrow configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_sungrow
+      - action: shell_command.switch_to_sungrow
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "sungrow"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual Sungrow Activation Complete"
           message: >
@@ -3142,24 +3142,24 @@ script:
     alias: "Manual Activate Sigenergy"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting Sigenergy Activation"
           message: "Activating Sigenergy configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_sigenergy
+      - action: shell_command.switch_to_sigenergy
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "sigenergy"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual Sigenergy Activation Complete"
           message: >
@@ -3171,24 +3171,24 @@ script:
     alias: "Manual Activate AlphaESS"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting AlphaESS Activation"
           message: "Activating AlphaESS configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_alphaess
+      - action: shell_command.switch_to_alphaess
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "alphaess"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual AlphaESS Activation Complete"
           message: >
@@ -3200,24 +3200,24 @@ script:
     alias: "Manual Activate Goodwe"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting Goodwe Activation"
           message: "Activating Goodwe configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_goodwe
+      - action: shell_command.switch_to_goodwe
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "goodwe"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual Goodwe Activation Complete"
           message: >
@@ -3229,24 +3229,24 @@ script:
     alias: "Manual Activate Goodwe_ET"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting Goodwe ET Activation"
           message: "Activating Goodwe ET configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_goodwe_et
+      - action: shell_command.switch_to_goodwe_et
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "goodwe_et"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual Goodwe ET Activation Complete"
           message: >
@@ -3258,24 +3258,24 @@ script:
     alias: "Manual Activate Fronius"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting Fronius Activation"
           message: "Activating Fronius configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_fronius
+      - action: shell_command.switch_to_fronius
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "fronius"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual Fronius Activation Complete"
           message: >
@@ -3287,24 +3287,24 @@ script:
     alias: "Manual Activate SolarEdge"
     icon: mdi:solar-power
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "Starting SolarEdge Activation"
           message: "Activating SolarEdge configuration... Please wait."
           notification_id: manual_activation_progress
       - delay: "00:00:02"
-      - service: shell_command.switch_to_solaredge
+      - action: shell_command.switch_to_solaredge
       - delay: "00:00:05"
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:02"
-      - service: input_select.select_option
+      - action: input_select.select_option
         data:
           entity_id: input_select.inverter_brand
           option: "solaredge"
-      - service: input_boolean.turn_on
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.restart_required
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "✅ Manual SolarEdge Activation Complete"
           message: >
@@ -3316,9 +3316,9 @@ script:
     alias: "Check Configuration Status"
     icon: mdi:file-check
     sequence:
-      - service: shell_command.check_config_files
+      - action: shell_command.check_config_files
       - delay: "00:00:03"
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "📋 Configuration Status Check"
           message: >
@@ -3338,7 +3338,7 @@ script:
     alias: "Notify Restart Needed"
     icon: mdi:information
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "🔄 Configuration Updated - Restart Required"
           message: >
@@ -3353,44 +3353,44 @@ script:
     alias: "Check for Energy Manager Updates"
     icon: mdi:update
     sequence:
-      - service: automation.trigger
+      - action: automation.trigger
         target:
           entity_id: automation.energy_manager_manual_update_check
   update_energy_manager:
     alias: "Update Energy Manager"
     icon: mdi:download
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "🔄 Energy Manager Update Starting"
           message: "Starting Energy Manager update process. Do not restart Home Assistant during this process."
           notification_id: "em_updating"
-      - service: shell_command.perform_energy_manager_update
+      - action: shell_command.perform_energy_manager_update
         response_variable: update_result
       - delay:
           seconds: 10
-      - service: persistent_notification.dismiss
+      - action: persistent_notification.dismiss
         data:
           notification_id: "em_updating"
       - if:
           - condition: template
             value_template: "{{ update_result.returncode == 0 }}"
         then:
-          - service: input_boolean.turn_off
+          - action: input_boolean.turn_off
             target:
               entity_id: input_boolean.energy_manager_update_available
-          - service: homeassistant.update_entity
+          - action: homeassistant.update_entity
             target:
               entity_id: sensor.energy_manager_current_version
           - delay:
               seconds: 2
-          - service: persistent_notification.create
+          - action: persistent_notification.create
             data:
               title: "✅ Energy Manager Update Complete"
               message: "Successfully updated to version {{ states('input_text.energy_manager_available_version') }}. Please reboot Home Assistant."
               notification_id: "em_update_complete"
         else:
-          - service: persistent_notification.create
+          - action: persistent_notification.create
             data:
               title: "❌ Energy Manager Update Failed"
               message: "Update failed. Check the logs for details."
@@ -3399,29 +3399,29 @@ script:
     alias: "Update Energy Manager Reinstall"
     icon: mdi:download
     sequence:
-      - service: persistent_notification.create
+      - action: persistent_notification.create
         data:
           title: "🔄 Energy Manager Reinstall Starting"
           message: "Starting Energy Manager reinstall process. Do not restart Home Assistant during this process."
           notification_id: "em_updating"
-      - service: shell_command.perform_energy_manager_update_force
+      - action: shell_command.perform_energy_manager_update_force
         response_variable: update_result
       - delay:
           seconds: 10
-      - service: persistent_notification.dismiss
+      - action: persistent_notification.dismiss
         data:
           notification_id: "em_updating"
       - if:
           - condition: template
             value_template: "{{ update_result.returncode == 0 }}"
         then:
-          - service: persistent_notification.create
+          - action: persistent_notification.create
             data:
               title: "✅ Energy Manager Reinstall Complete"
               message: "Successfully reinstalled update. Please restart Home Assistant if required."
               notification_id: "em_update_complete"
         else:
-          - service: persistent_notification.create
+          - action: persistent_notification.create
             data:
               title: "❌ Energy Manager Reinstall Failed"
               message: "Reinstall failed. Check the logs for details."
