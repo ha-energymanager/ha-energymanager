@@ -181,11 +181,11 @@ views:
 
                 **smart_cheapest** - Charges at maximum rate during forecast-selected cheapest intervals to meet the target kWh. Uses grid. Falls back to “best effort” if insufficient cheap time exists.
 
-                **solar_only** - Charges only from excess solar. Requires ~8A minimum solar to start. Stops if grid import exceeds ~500W. Will not use grid.
+                **solar_only** - Charges only from excess solar. Requires ~8A minimum solar to start. Stops if grid import exceeds ~500W. Will not use grid if more than this.
 
                 **solar_preferred** - Charges using solar only if ~8A or over excess generation is occurring. If generation is under ~8A the grid will supplement the charge to keep the charge active, however, if _maximum grid import price_ is exceeded, it will top up from your battery _until_ the _min home battery SOC_ is reached, but as long as _Allow home battery to charge EV_ has been enabled. Otherwise it will stop charging.
 
-                **battery_only** - Charges using stored energy from your battery only. It will keep charging until your _min home battery soc_ is achieved (refer _Battery Protection_ section). Note that the _All home battery to charge EV_ must be enabled for this to work.  This is intended for night time use and will not charge using solar.
+                **battery_only** - Charges using stored energy from your battery only. It will keep charging until your _min home battery soc_ is achieved (refer _Battery Protection_ section). Note that the _Allow home battery to charge EV_ must be enabled for this to work.  This is intended for night time use and will not charge using solar.
             card_mod:
               style: |
                 ha-card {
@@ -243,10 +243,10 @@ views:
           - type: markdown
             content: >
                 Make sure that the **Surplus/Start threshold** is considerably greater than the **Lower threshold** to stop charge flapping. 8A (~1900W single phase, 5700W 3-phase) minimum is required for safe EV charging.
-                Solar charging will not occur if 8A is not met if the changing policy is set to **solar_only**. 
+                Solar charging will not occur if 8A is not met if the charging policy is set to **solar_only**. 
                 
                 
-                If **solar_preferred** is selected, the solar charge will be topped up by **grid import**, but only to your selected maxmimum grid import price.
+                If **solar_preferred** is selected, the solar charge will be topped up by **grid import**, but only to your selected maximum grid import price.
             card_mod:
               style: |
                 ha-card {
