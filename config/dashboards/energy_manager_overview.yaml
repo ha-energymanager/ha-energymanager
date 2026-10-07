@@ -629,6 +629,15 @@ views:
                     const t = entity.attributes.energy_plan?.timeline || [];
                     return t.map(p => [new Date(p.ts).getTime(),
                     Number(p.expected?.soc_pct_end ?? 0)]);
+                - entity: sensor.energy_manager_plan
+                  name: EV Charge (kW)
+                  yaxis_id: kw
+                  type: column
+                  stroke_width: 0
+                  data_generator: >
+                    const t = entity.attributes.energy_plan?.timeline || [];
+                    return t.map(p => [new Date(p.ts).getTime(),
+                    Number(p.ev?.charge_kw ?? 0)]);
               apex_config:
                 chart:
                   height: 320
