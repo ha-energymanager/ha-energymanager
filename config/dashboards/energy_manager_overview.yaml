@@ -717,6 +717,77 @@ views:
                     const t = entity.attributes.energy_plan?.timeline || [];
                     return t.map(p => [new Date(p.ts).getTime(),
                     Number(p.setpoints?.curtail_pct ?? 0)]);
+        - type: custom:state-switch
+          entity: binary_sensor.ocpp_active
+          states:
+            "on":
+              type: custom:apexcharts-card
+              header:
+                title: Next 24hr's EV Charging Forecast (subject to change)
+                show: true
+              graph_span: 24h
+              span:
+                start: minute
+              now:
+                show: true
+              apex_config:
+                chart:
+                  height: 220
+                legend:
+                  show: true
+                  formatter: 'EVAL:function(seriesName, opts) { return seriesName; }'
+              yaxis:
+                - id: power
+                  opposite: false
+                  min: 0
+                  decimals: 1
+                  apex_config:
+                    title:
+                      text: Power (kW)
+              series:
+                - entity: sensor.energy_manager_plan
+                  name: Solar Charge
+                  type: area
+                  color: yellow
+                  opacity: 0.3
+                  yaxis_id: power
+                  stroke_width: 2
+                  data_generator: >
+                    const t = entity.attributes.energy_plan?.timeline || [];
+                    return t.map(p => [new Date(p.ts).getTime(), Number(p.ev?.solar_kw ??
+                    0)]);
+                - entity: sensor.energy_manager_plan
+                  name: Grid Charge
+                  type: area
+                  color: red
+                  opacity: 0.1
+                  yaxis_id: power
+                  stroke_width: 2
+                  data_generator: >
+                    const t = entity.attributes.energy_plan?.timeline || [];
+                    return t.map(p => [new Date(p.ts).getTime(), Number(p.ev?.grid_kw ??
+                    0)]);
+                - entity: sensor.energy_manager_plan
+                  name: Battery Charge
+                  type: line
+                  color: blue
+                  yaxis_id: power
+                  stroke_width: 2
+                  data_generator: >
+                    const t = entity.attributes.energy_plan?.timeline || [];
+                    return t.map(p => [new Date(p.ts).getTime(), Number(p.ev?.battery_kw ??
+                    0)]);
+                - entity: sensor.energy_manager_plan
+                  name: Total Charge
+                  type: area
+                  color: green
+                  opacity: 0.1
+                  yaxis_id: power
+                  stroke_width: 2
+                  data_generator: >
+                    const t = entity.attributes.energy_plan?.timeline || [];
+                    return t.map(p => [new Date(p.ts).getTime(), Number(p.ev?.charge_kw ??
+                    0)]);
     - type: custom:layout-card
       view_layout:
         grid_column: 1
