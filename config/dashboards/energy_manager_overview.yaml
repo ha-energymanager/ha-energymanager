@@ -769,8 +769,9 @@ views:
                     0)]);
                 - entity: sensor.energy_manager_plan
                   name: Battery Charge
-                  type: line
+                  type: area
                   color: blue
+                  opacity: 0.1
                   yaxis_id: power
                   stroke_width: 2
                   data_generator: >
