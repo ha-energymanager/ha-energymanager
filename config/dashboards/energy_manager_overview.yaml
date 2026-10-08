@@ -738,12 +738,17 @@ views:
                   formatter: 'EVAL:function(seriesName, opts) { return seriesName; }'
               yaxis:
                 - id: power
-                  opposite: false
                   min: 0
                   decimals: 1
                   apex_config:
                     title:
                       text: Power (kW)
+                - id: battery
+                  decimals: 0
+                  opposite: true
+                  apex_config:
+                    title:
+                      text: "%"
               series:
                 - entity: sensor.energy_manager_plan
                   name: Solar Charge
@@ -769,9 +774,8 @@ views:
                     0)]);
                 - entity: sensor.energy_manager_plan
                   name: Battery Charge
-                  type: area
+                  type: line
                   color: blue
-                  opacity: 0.1
                   yaxis_id: power
                   stroke_width: 2
                   data_generator: >
@@ -780,7 +784,7 @@ views:
                     0)]);
                 - entity: sensor.energy_manager_plan
                   name: Total Charge
-                  type: area
+                  type: line
                   color: green
                   opacity: 0.1
                   yaxis_id: power
@@ -788,6 +792,16 @@ views:
                   data_generator: >
                     const t = entity.attributes.energy_plan?.timeline || [];
                     return t.map(p => [new Date(p.ts).getTime(), Number(p.ev?.charge_kw ??
+                    0)]);
+                - entity: sensor.energy_manager_plan
+                  name: EV SOC
+                  type: line
+                  color: purple
+                  yaxis_id: battery
+                  stroke_width: 2
+                  data_generator: >
+                    const t = entity.attributes.energy_plan?.timeline || [];
+                    return t.map(p => [new Date(p.ts).getTime(), Number(p.ev?.ev_soc ??
                     0)]);
     - type: custom:layout-card
       view_layout:
