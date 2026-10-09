@@ -85,7 +85,7 @@ views:
           card_mod:
             style: |
               ha-card {
-                display: {% if is_state('input_select.electricity_provider',['Flow Power','Globird','Other']) %} none {% else %} block {% endif %};
+                display: {% if states('input_select.electricity_provider') in ['Flow Power','Globird','Other'] %} none {% else %} block {% endif %};
               }
           card:
             type: custom:apexcharts-card
@@ -378,7 +378,7 @@ views:
           card_mod:
             style: |
               ha-card {
-                display: {% if is_state('input_select.electricity_provider',['Flow Power','Globird','Other']) %} none {% else %} block {% endif %};
+                display: {% if states('input_select.electricity_provider') in ['Flow Power','Globird','Other'] %} none {% else %} block {% endif %};
               }
           card:
             type: custom:apexcharts-card
@@ -1412,7 +1412,6 @@ views:
           graph_span: 24h
           update_interval: 5min
           header:
-            xaxis:
             show: true
             title: Inverter Power - Last 24 Hours
             show_states: true
@@ -1695,6 +1694,7 @@ views:
             grid:
               show: true
               strokeDashArray: 3
+            xaxis:
               type: datetime
               labels:
                 format: dd/MM
