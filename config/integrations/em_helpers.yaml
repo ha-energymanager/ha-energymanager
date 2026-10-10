@@ -195,6 +195,29 @@ command_line:
 
 # === ENERGY_MANAGER_UPDATE_INPUTS_START v1.3.0 ===
 input_select:
+  inverter_brand:
+    name: Inverter Brand
+    icon: mdi:form-select
+    options:
+    - sungrow
+    - sigenergy
+    - goodwe
+    - goodwe_et
+    - goodwe_int
+    - alphaess
+    - fronius
+    - solaredge
+    
+  electricity_provider:
+    name: Electricity Provider
+    icon: mdi:lightning-bolt
+    options:
+    - LocalVolts
+    - Amber Electric
+    - Flow Power
+    - Globird
+    - Other
+
   inverter_run_mode:
     name: Inverter mode
     options:
@@ -335,6 +358,18 @@ input_select:
     icon: mdi:format-list-bulleted  
 
 input_boolean:
+  demand_period_enabled:
+    name: Demand Period Enabled
+    icon: mdi:clock-time-five-outline
+    
+  enable_exclusion_period:
+    name: Enable Exclusion Period
+    icon: mdi:clock-outline
+    
+  high_sell_price_toggle:
+    name: high_sell_price_toggle
+    icon: mdi:toggle-switch
+
   inverter_enable_forced_power:
     name: "Enable Forced Charge/Discharge"
     initial: false
@@ -675,6 +710,51 @@ input_button:
     icon: mdi:restore
 
 input_number:
+  inverter_import_limit:
+    name: Inverter Size
+    icon: mdi:home-import-outline
+    min: 0
+    max: 100
+    step: 0.1
+    mode: box
+    unit_of_measurement: kW
+    
+  solar_array_size:
+    name: Solar Array Size
+    icon: mdi:solar-panel
+    min: 0
+    max: 100
+    step: 0.1
+    mode: box
+    unit_of_measurement: kW
+    
+  inverter_export_limit:
+    name: Inverter Export Limit
+    icon: mdi:home-export-outline
+    min: 0
+    max: 100
+    step: 0.1
+    mode: box
+    unit_of_measurement: kW
+    
+  bad_weather_rain_today:
+    name: bad_weather_rain_today
+    icon: mdi:weather-rainy
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+    unit_of_measurement: mm
+    
+  bad_weather_rain_tomorrow:
+    name: bad_weather_rain_tomorrow
+    icon: mdi:weather-rainy
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+    unit_of_measurement: mm
+
   inverter_max_soc:
     name: "Maximum SOC"
     min: 0
@@ -2025,6 +2105,83 @@ input_number:
     icon: mdi:home-export-outline
 
 input_text:
+  amber_api_key:
+    name: Amber API Key
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: password
+    
+  amber_site:
+    name: Amber Site
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: text
+    
+  localvolts_key:
+    name: LocalVolts Key
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: password
+    
+  localvolts_partner_id:
+    name: LocalVolts Partner ID
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: text
+    
+  nmi:
+    name: NMI
+    icon: mdi:numeric
+    min: 0
+    max: 255
+    mode: text
+    
+  energymanager_key:
+    name: EnergyManager Key
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: password
+    
+  em_api_version:
+    name: EM API Version
+    icon: mdi:api
+    min: 0
+    max: 255
+    mode: text
+    
+  timezone:
+    name: Timezone
+    icon: mdi:map-clock
+    min: 0
+    max: 255
+    mode: text
+    
+  solcast_key:
+    name: Solcast Key
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: password
+    
+  solcast_array_1:
+    name: Solcast Array 1
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: text
+    
+  solcast_array_2:
+    name: Solcast Array 2
+    icon: mdi:shield-key-outline
+    min: 0
+    max: 255
+    mode: text
+
   saved_inverter_brand:
     name: "Saved Inverter Brand"
 
@@ -2223,6 +2380,36 @@ input_text:
     name: Last selected electricity plan
 
 input_datetime:
+  battery_install_date:
+    name: Battery Install Date
+    icon: mdi:home-battery
+    has_date: true
+    has_time: false
+    
+  demand_start:
+    name: Demand Start
+    icon: mdi:clock-time-five-outline
+    has_date: false
+    has_time: true
+    
+  demand_end:
+    name: Demand End
+    icon: mdi:clock-time-nine-outline
+    has_date: false
+    has_time: true
+    
+  exclusion_start_time:
+    name: Exclusion start time
+    icon: mdi:clock-time-two-outline
+    has_date: false
+    has_time: true
+    
+  exclusion_end_time:
+    name: Exclusion end time
+    icon: mdi:clock-time-three-outline
+    has_date: false
+    has_time: true
+
   energy_manager_last_update_check:
     name: "Last Update Check"
     has_date: true
@@ -2507,6 +2694,81 @@ timer:
     name: Energy Control Timer
     restore: true
 
-    # === ENERGY_MANAGER_UPDATE_INPUTS_END ===
+template:
+- number:
+  - name: battery_2a
+    unique_id: em_yaml_battery_2a
+    default_entity_id: number.battery_2a
+    state: '{{ (states(''input_number.battery_1'') | float(0)) - 1 }}'
+    min: -1
+    max: 100
+    step: 1
+    set_value: []
+    
+  - name: battery_3a
+    unique_id: em_yaml_battery_3a
+    default_entity_id: number.battery_3a
+    state: '{{ (states(''input_number.battery_2'') | float(0)) - 1 }}'
+    min: -1
+    max: 100
+    step: 1
+    set_value: []
+    
+  - name: battery_4a
+    unique_id: em_yaml_battery_4a
+    default_entity_id: number.battery_4a
+    state: '{{ (states(''input_number.battery_3'') | float(0)) - 1 }}'
+    min: -1
+    max: 100
+    step: 1
+    set_value: []
+    
+  - name: battery_5a
+    unique_id: em_yaml_battery_5a
+    default_entity_id: number.battery_5a
+    state: '{{ (states(''input_number.battery_4'') | float(0)) - 1 }}'
+    min: -1
+    max: 100
+    step: 1
+    set_value: []
+    
+  - name: battery_6a
+    unique_id: em_yaml_battery_6a
+    default_entity_id: number.battery_6a
+    state: '{{ (states(''input_number.battery_5'') | float(0)) - 1 }}'
+    min: -1
+    max: 100
+    step: 1
+    set_value: []
+    
+  - name: battery_high_sell_mode_usable
+    unique_id: em_yaml_battery_high_sell_mode_usable
+    default_entity_id: number.battery_high_sell_mode_usable
+    state: '{{ 100 - (states(''input_number.high_sell_battery_reserve'') | float(0)) }}'
+    min: 0
+    max: 100
+    step: 1
+    set_value: []
+    
+  sensor:
+  - name: Grid Buy Price
+    unique_id: em_yaml_grid_buy_price
+    default_entity_id: sensor.grid_buy_price
+    state: '{{ states(''sensor.nodered_buyprice'') | float(0) | round(2) }}'
+    unit_of_measurement: c
+    
+  - name: Grid Sell Price
+    unique_id: em_yaml_grid_sell_price
+    default_entity_id: sensor.grid_sell_price
+    state: '{{ states(''sensor.nodered_sellprice'') | float(0) | round(2) }}'
+    unit_of_measurement: c
+    
+  - name: BOM Last Updated
+    unique_id: em_yaml_bom_last_updated
+    default_entity_id: sensor.bom_last_updated
+    state: '{% set s = states.sensor.home_temp %}{{ as_timestamp(s.last_updated) | timestamp_custom(''%B %-d, %Y at %-I:%M
+      %p'') if s is defined else ''Unavailable'' }}'
+
+# === ENERGY_MANAGER_UPDATE_INPUTS_END ===
 
 
