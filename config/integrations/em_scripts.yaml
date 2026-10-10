@@ -3418,7 +3418,7 @@ script:
           - action: persistent_notification.create
             data:
               title: "✅ Energy Manager Reinstall Complete"
-              message: "Successfully reinstalled update. Please restart Home Assistant if required."
+              message: "Successfully reinstalled update. Ensure you reboot Home Assistant."
               notification_id: "em_update_complete"
         else:
           - action: persistent_notification.create
