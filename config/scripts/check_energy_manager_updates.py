@@ -41,7 +41,7 @@ def main():
         if result['update_available']:
             manifest = result['manifest']
             notes = next((manifest[key] for key in ('changelog', 'release_notes', 'notes', 'description')
-                          if isinstance(manifest.get(key), str)), '')
+        if isinstance(manifest.get(key), str)), '')
             write_outputs('update_available', result['remote_version'], notes, checker.branch)
             print(f"Update available on {checker.branch}: {result['current_version']} -> {result['remote_version']}")
             return 1
