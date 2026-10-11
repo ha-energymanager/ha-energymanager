@@ -57,9 +57,32 @@ class EnergyManagerUpdateChecker:
         self.target_sha = None
 
     def resolve_branch(self, branch):
-        branch = str(branch or 'main').strip().lower()
-        if branch in ('unknown', 'unavailable'):
-            branch = 'main'
+        if branch is None:
+            token = os.environ.get('SUPERVISOR_TOKEN', '')
+            if not token:
+                raise RuntimeError(
+                    'Cannot read input_select.em_update_branch: '
+                    'SUPERVISOR_TOKEN is unavailable. '
+                    'Pass --branch explicitly in this environment.'
+                )
+
+            request = urllib.request.Request(
+                'http://supervisor/core/api/states/input_select.em_update_branch',
+                headers={
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json',
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    entity = json.loads(response.read())
+                branch = entity.get('state')
+            except (OSError, ValueError, urllib.error.URLError) as exc:
+                raise RuntimeError(
+                    'Cannot read input_select.em_update_branch: ' + str(exc)
+                ) from exc
+
+        branch = str(branch or '').strip().lower()
         if branch not in ('main', 'early', 'test', 'development'):
             raise ValueError(f'Invalid update branch: {branch!r}')
         return branch
