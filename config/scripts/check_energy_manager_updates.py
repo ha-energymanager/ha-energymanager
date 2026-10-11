@@ -33,8 +33,10 @@ def main():
     parser.add_argument('--branch', choices=('main', 'early', 'test', 'development'), help='Override HA branch selector')
     parser.add_argument('--key', default='', help=argparse.SUPPRESS)  # Legacy shell command compatibility.
     args = parser.parse_args()
+    selected_branch = args.branch or 'unknown'
     try:
         checker = EnergyManagerUpdateChecker(branch=args.branch)
+        selected_branch = checker.branch
         result = checker.check_for_updates()
         if result['error']:
             raise RuntimeError(result['error'])
@@ -50,7 +52,7 @@ def main():
             print(f"No updates available on {checker.branch}")
         return 0
     except Exception as exc:
-        write_outputs('error', '', branch=args.branch or 'main', error=str(exc))
+        write_outputs('error', '', branch=selected_branch, error=str(exc))
         print(f'Update check failed: {exc}', file=sys.stderr)
         return 2
 
