@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# perform_energy_manager_update.py — GitHub branch updater
+"""
+Perform Energy Manager Update v1.3.0 - Github branch updater
+"""
 import sys
 import os
 import shutil
