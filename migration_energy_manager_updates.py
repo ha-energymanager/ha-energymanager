@@ -294,14 +294,14 @@ def migrate():
                 mode = 0o600
             atomic_write(target, contents[target], mode)
         cli('core', 'check')
-        print(f'Migrated {len(migrated)} UI helpers. Configuration check passed. Starting Core...', flush=True)
+        print(f'Migrated {len(migrated)} UI helpers to YAML. Configuration check passed. Starting Core...', flush=True)
         cli('core', 'start')
         stopped = False
         pending.unlink()
         atomic_write(backup / 'completed.json', encode_json({'migrated': sorted(migrated)}))
         print(f'GitHub updater and expanded helpers installed from {REPOSITORY}@{sha[:12]}.')
-        print(f'Installed version remains {current_version}; the next normal update is still available.')
-        print(f'Backup: {backup}')
+        print(f'Installed version remains at {current_version}; please perform a normal update to check for a new version.')
+        print(f'Backup location: {backup}')
         print('Verify helper IDs/values and dashboards after Core has finished starting.')
     except BaseException:
         if written:
