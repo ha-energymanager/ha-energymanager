@@ -17,7 +17,7 @@ import argparse
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Energy Manager Update Script')
     parser.add_argument('--force-reinstall', action='store_true', help='Force reinstall of current version')
-    parser.add_argument('--branch', choices=('main', 'early', 'development', 'test'), help='Override HA branch selector')
+    parser.add_argument('--branch', choices=('main', 'early', 'test', 'development'), help='Override HA branch selector')
     parser.add_argument('--key', default='', help=argparse.SUPPRESS)
     return parser.parse_args()
 
