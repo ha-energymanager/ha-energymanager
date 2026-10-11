@@ -60,7 +60,7 @@ class EnergyManagerUpdateChecker:
         branch = str(branch or 'main').strip().lower()
         if branch in ('unknown', 'unavailable'):
             branch = 'main'
-        if branch not in ('main', 'early'):
+        if branch not in ('main', 'early', 'test', 'development'):
             raise ValueError(f'Invalid update branch: {branch!r}')
         return branch
 
