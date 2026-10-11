@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Check for Energy Manager Updates v1.3.0 - Github branch update checker
+"""
 import argparse
 import json
 import os
