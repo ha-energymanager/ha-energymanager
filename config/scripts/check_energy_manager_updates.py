@@ -30,7 +30,7 @@ def write_outputs(status, version, changelog='', branch='main', error=''):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--branch', choices=('main', 'development'), help='Override HA branch selector')
+    parser.add_argument('--branch', choices=('main', 'early'), help='Override HA branch selector')
     parser.add_argument('--key', default='', help=argparse.SUPPRESS)  # Legacy shell command compatibility.
     args = parser.parse_args()
     try:
