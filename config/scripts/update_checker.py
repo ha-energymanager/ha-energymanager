@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Energy Manager Update Checker v1.3.0
+"""
 import json
 import logging
 import os
