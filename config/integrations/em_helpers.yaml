@@ -1816,6 +1816,15 @@ input_number:
     unit_of_measurement: "%"
     icon: mdi:battery-arrow-up
 
+  em_ev_current_soc:
+    name: EV Battery SOC
+    min: 0
+    max: 100
+    step: 0.1
+    mode: box
+    unit_of_measurement: "%"
+    icon: mdi:battery-high
+
   em_ev_block_above_price:
     name: EV Block charging over price
     min: -1.00
