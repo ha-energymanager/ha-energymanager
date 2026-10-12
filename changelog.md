@@ -1,4 +1,6 @@
-## 1.3.0 - 2026-10-xx
+<details open>
+<summary><strong>1.3.0 - 2026-10-xx</strong></summary>
+
 ### Added
 * New split news page. Now one column for version specific, another for general information.
 * New update method via Github allowing community submissions
@@ -14,7 +16,11 @@
 * House load not calculated correctly in Other provider Node-RED
 * Bug where if export price (for DIY/Other) is for a 24hr period that it would fail to detect the period
 
-## 1.2.0 - 2026-09-14
+</details>
+
+<details>
+<summary><strong>1.2.0 - 2026-09-14</strong></summary>
+
 #### Added
 * Custom Electricity Plans
 * GoodWe_int - use purely the GoodWe integration to control the GoodWe
@@ -35,7 +41,11 @@
 * EV Charging - fixed scripts for import/export/load_power for upstream EV circuit to show correct import and export values
 * Logging - fixed ocpp charger logging if ocpp integration not installed
 
-## 1.1.0 - 2026-06-19
+</details>
+
+<details>
+<summary><strong>1.1.0 - 2026-06-19</strong></summary>
+
 #### Added
 * Node-RED verifications
 * Energy profiles
@@ -56,7 +66,11 @@
 * Removed high-sell and sell-buy mode buttons from PV dashboard
 * Fixed billing cycle reset
 
-## 1.0.0 - 2026-05-11
+</details>
+
+<details>
+<summary><strong>1.0.0 - 2026-05-11</strong></summary>
+
 #### Added
 * Globird 'Zerohero' support
 * Tooltips for PV Dashboard
@@ -86,7 +100,11 @@
 * Fixed invalid login notification on update
 * Sigenergy modbus updates @JustinBH
 
-## 0.3.3 - 2026-01-15
+</details>
+
+<details>
+<summary><strong>0.3.3 - 2026-01-15</strong></summary>
+
 ### Added
 * Flow Power support
   - New entities
@@ -121,7 +139,11 @@
 ### Fixed
 * No bug fixes
 
-## 0.3.2 - 2025-01-10
+</details>
+
+<details>
+<summary><strong>0.3.2 - 2025-01-10</strong></summary>
+
 ### Added
 * Added SolarEdge support
 * Added Fronius support
@@ -143,7 +165,11 @@
 ### Fixed
 * Weather.weather_home changed to weather.home in energy_manager_overview.yaml for Amber users (was working for LocalVolts users already)
 
-## 0.3.1 - 2025-12-05
+</details>
+
+<details>
+<summary><strong>0.3.1 - 2025-12-05</strong></summary>
+
 ### Added
 - Goodwe support
 - Sell-Buy Mode (sell-buy price difference)
@@ -161,7 +187,11 @@
 * Inverter_battery_charge_mqtt class changed to measurement
 * Various sigenergy modbus sensors updated (@JBH)
 
-## 0.3.0 - 2025-10-03
+</details>
+
+<details>
+<summary><strong>0.3.0 - 2025-10-03</strong></summary>
+
 ### Added
 * Flows, configuration, energy manager pv - Added granular demand period
 * User based automations, templates, scenes and scripts yaml files, prefixed with user_ - for UI additions outside of EM
@@ -187,7 +217,11 @@
 * User created Node-RED tabs are now retained on update.
 * Updated mqtt_sensors.yaml to fix deprecation warning of object_id
 
-## 0.2.5 - 2025-09-21
+</details>
+
+<details>
+<summary><strong>0.2.5 - 2025-09-21</strong></summary>
+
 ### Added
 * Amber forecast increased to 24hrs, Node-RED flows updated
 * If EM enters disabled mode, it will now limit exports to 100W as part of the procedure
@@ -203,7 +237,11 @@
 * Fixed Amber feedIn pricing - was spot, now perkWh
 * sigenergy_modbus.yaml.disabled - 40032 changed to 40034 for battery discharging limit
 
-## 0.2.4 - 2025-09-05
+</details>
+
+<details>
+<summary><strong>0.2.4 - 2025-09-05</strong></summary>
+
 ### Added
 * Added new Energy Flow visual on Energy Manager PV Dashboard (with disable option)
 * Added /config/www/energy-flow-card.js (energy manager flow addition)
@@ -239,7 +277,11 @@
 * Corrected curtailing issue with AlphaESS - added 0x700 register to curtailing script
 * Corrected Node-RED curtailment error for battery_w for free users
 
-## 0.2.3 - 2025-08-30
+</details>
+
+<details>
+<summary><strong>0.2.3 - 2025-08-30</strong></summary>
+
 ### Added
 * input_boolean.emergency_override sensor to completely disable energy manager if required
 * input_number.battery_use_cost sensor to value cost to discharge battery
@@ -252,7 +294,11 @@
 * Node-RED API server decision logic
 * scripts.yaml - sensor.alphaess_pv_power updated to sensor.alphaess_total_active_pv_power
 
-## 0.2.2 - 2025-08-26
+</details>
+
+<details>
+<summary><strong>0.2.2 - 2025-08-26</strong></summary>
+
 ### Added
 * Additional of sending import/export kWh and appropriate pricing and entities to API (Node-Red updated)
 ### Changed
@@ -262,7 +308,11 @@
 * scripts.yaml - for AlphaESS
 * alphaess_modbus.yaml.disabled - removed scaling for reserve UPS and charge cut-off SOC, min_soc/max_soc refresh reduced from 60 to 10
 
-## 0.2.1 - 2025-08-20
+</details>
+
+<details>
+<summary><strong>0.2.1 - 2025-08-20</strong></summary>
+
 ### Added
 * input_number.battery_charge_power_hardlimit
 * input_number.battery_discharge_power_hardlimit
@@ -279,7 +329,11 @@
 * Changed "preserve battery" "no limit on battery discharge" to use input_number.battery_discharge_power_hardlimit
 * Min & Max SOC settings for AlphaESS
 
-## 0.2.0 - 2025-08-17
+</details>
+
+<details>
+<summary><strong>0.2.0 - 2025-08-17</strong></summary>
+
 ### Added
 * Support for separate URLs for free and premium APIs
 * Added requirement for EM to only be within a specified number of updates behind
@@ -293,3 +347,5 @@
 * Home Assistant will now force poll every 5 mins. Previously if battery level and FIT did not change, it did not report in. Now it will. This was causing false-positive email alerts for systems not contacting the API.
 ### Fixed
 * AlphaESS min_soc / max_soc modification scaling removed
+
+</details>
