@@ -4,7 +4,7 @@
 <summary><strong>1.3.0 - 2026-10-xx</strong></summary>
 
 ### Added
-* New split news page. Now one column for version specific, another for general information.
+* New split news page. One column version specific, one for general information, and one for changelog
 * New update method via Github allowing community submissions
 * Safe-guard added for Flow Power users if EM tag detection file not present
 * All entities now YAML based (removal of UI entities via migration script)
