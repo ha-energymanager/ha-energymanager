@@ -6,7 +6,7 @@
 // Copy to /config/www/em-events-card.js
 // Add resource: /local/em-events-card.js (type: JavaScript module)
 
-const _EMEC_VERSION = 'v3.4.0';
+const _EMEC_VERSION = 'v3.6.0';
 
 let _EMEC_CUR = '$';
 
@@ -29,7 +29,69 @@ const _EMEC_SENSORS = [
   'sensor.monthly_battery_discharge',
   'sensor.daily_consumed_energy',
   'sensor.daily_exported_energy',
+  'sensor.charger_current_import',
+  'sensor.charger_energy_session',
+  'sensor.charger_status_connector',
+  'input_select.em_ev_site_phases',
 ];
+
+
+// EV history uses actual charger readings, independently of decision polling.
+// Five-minute rows start at their displayed timestamp. Energy deltas belong to
+// (start, end]; a delta at a shared boundary is counted once, in the earlier row.
+function _emec_evNumber(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+function _emec_evFmt(value) {
+  return value == null || value < 0.0005 ? '—' : value.toFixed(3);
+}
+function _emec_evHistory(lookup, start, end, fallbackPhases) {
+  const current = lookup['sensor.charger_current_import'] || [];
+  const phaseHistory = lookup['input_select.em_ev_site_phases'] || [];
+  const meter = lookup['sensor.charger_energy_session'] || [];
+  const statuses = lookup['sensor.charger_status_connector'] || [];
+  const times = [...new Set([start, end,
+    ...current.filter(x => x.t > start && x.t < end).map(x => x.t),
+    ...phaseHistory.filter(x => x.t > start && x.t < end).map(x => x.t)
+  ])].sort((a,b) => a-b);
+  let ampMs = 0, powerMs = 0, coveredMs = 0;
+  for (let i = 0; i < times.length - 1; i++) {
+    const amps = _emec_evNumber(_emec_getAt(current, times[i]));
+    if (amps == null) continue;
+    const phaseValue = _emec_getAt(phaseHistory, times[i]);
+    const phases = Number(phaseValue) === 3 ? 3 : Number(phaseValue) === 1 ? 1 : fallbackPhases;
+    const duration = times[i+1] - times[i];
+    ampMs += amps * duration;
+    powerMs += amps * 230 * phases / 1000 * duration;
+    coveredMs += duration;
+  }
+  const duration = end - start;
+  const complete = duration > 0 && coveredMs === duration;
+  const kw = complete ? powerMs / duration : null;
+  const amps = complete ? ampMs / duration : null;
+  let previous = _emec_evNumber(_emec_getAt(meter, start));
+  let kwh = 0, validDelta = false;
+  for (const point of meter) {
+    if (point.t <= start || point.t > end) continue;
+    const value = _emec_evNumber(point.s);
+    if (value != null && previous != null) {
+      // A drop starts a new session; retain earlier positive deltas.
+      kwh += value >= previous ? value - previous : value;
+      validDelta = true;
+    }
+    previous = value;
+  }
+  // Flat valid meter readings mean zero, not missing data. Fall back only
+  // when no usable pair exists; the tooltip marks this as an estimate.
+  const estimated = !validDelta;
+  if (estimated) kwh = complete ? powerMs / 3600000 : null;
+  const chargingStatus = String(_emec_getAt(statuses, start)).toLowerCase() === 'charging' ||
+    statuses.some(x => x.t > start && x.t < end && String(x.s).toLowerCase() === 'charging');
+  return { kw, amps, kwh, estimated,
+    active: powerMs > 0 || kwh > 0 || chargingStatus };
+}
 
 const _EMEC_COLOURS = {
   green:  { bg: '#66ff66', txt: '#333333', cost: '#004400' },
@@ -52,6 +114,9 @@ const _EMEC_COLGROUP =
   '<col style="width:54px;">' +
   '<col style="width:56px;">' +
   '<col style="width:54px;">' +
+  '<col style="width:56px;">' +
+  '<col style="width:54px;">' +
+  '<col style="width:56px;">' +
   '<col style="width:56px;">' +
   '<col style="width:54px;">' +
   '<col style="width:56px;">' +
@@ -89,6 +154,9 @@ function _emec_buildColgroup(colSettings) {
     '<col style="width:54px;">',                   // Battery kW
     '<col style="width:56px;">',                   // Battery kWh
     '<col style="width:56px;">',                   // SoC%
+    '<col style="width:54px;">',                   // EV kW
+    '<col style="width:56px;">',                   // EV kWh
+    '<col style="width:56px;">',                   // EV SoC
     '<col style="width:72px;">'                    // Cost / Profit
   );
   
@@ -121,6 +189,7 @@ function _emec_buildTheadFuture(colSettings) {
   
   row1.push(
     '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🔋 Battery</th>',
+    '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🚗 EV</th>',
     '<th rowspan="2" style="text-align:center;vertical-align:bottom;box-shadow:inset 2px 0 0 #666;">Cost / <br>Profit</th>'
   );
   
@@ -143,6 +212,9 @@ function _emec_buildTheadFuture(colSettings) {
   }
   
   row2.push(
+    '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>',
+    '<th class="bgi" style="text-align:center;">kWh</th>',
+    '<th class="bgi" style="text-align:center;">SoC %</th>',
     '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>',
     '<th class="bgi" style="text-align:center;">kWh</th>',
     '<th class="bgi" style="text-align:center;">SoC %</th>'
@@ -171,6 +243,7 @@ function _emec_buildTheadPast(colSettings) {
   
   row1.push(
     '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🔋 Battery</th>',
+    '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🚗 EV</th>',
     '<th rowspan="2" style="text-align:center;vertical-align:bottom;box-shadow:inset 2px 0 0 #666;">Cost / <br>Profit</th>'
   );
   
@@ -193,6 +266,9 @@ function _emec_buildTheadPast(colSettings) {
   }
   
   row2.push(
+    '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>',
+    '<th class="bgi" style="text-align:center;">kWh</th>',
+    '<th class="bgi" style="text-align:center;">SoC %</th>',
     '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>',
     '<th class="bgi" style="text-align:center;">kWh</th>',
     '<th class="bgi" style="text-align:center;">SoC %</th>'
@@ -489,6 +565,7 @@ function _emec_buildHTML() {
     '<th colspan="2" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">⚡ Grid</th>' +
     '<th colspan="2" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">✂️ Curtailed</th>' +
     '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🔋 Battery</th>' +
+    '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🚗 EV</th>' +
     '<th rowspan="2" style="text-align:center;vertical-align:bottom;box-shadow:inset 2px 0 0 #666;">Cost / <br>Profit</th>' +
     '</tr>' +
     '<tr>' +
@@ -503,12 +580,15 @@ function _emec_buildHTML() {
     '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>' +
     '<th class="bgi" style="text-align:center;">kWh</th>' +
     '<th class="bgi" style="text-align:center;">SoC %</th>' +
+    '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>' +
+    '<th class="bgi" style="text-align:center;">kWh</th>' +
+    '<th class="bgi" style="text-align:center;">SoC %</th>' +
     '</tr>' +
     '</thead>' +
     '</table>' +
     '<div class="wrap"><table class="dt">' +
     _EMEC_COLGROUP +
-    '<tbody id="tb-future"><tr><td colspan="16" class="msg">⏳ Loading...</td></tr></tbody>' +
+    '<tbody id="tb-future"><tr><td colspan="19" class="msg">⏳ Loading...</td></tr></tbody>' +
     '</table></div>' +
     '</div>' +
     '<div class="pane" id="pane-past">' +
@@ -530,6 +610,7 @@ function _emec_buildHTML() {
     '<th colspan="2" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">⚡ Grid</th>' +
     '<th colspan="2" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">✂️ Curtailed</th>' +
     '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🔋 Battery</th>' +
+    '<th colspan="3" style="text-align:center;box-shadow:inset 2px 0 0 #666;border-bottom:1px solid #666;">🚗 EV</th>' +
     '<th rowspan="2" style="text-align:center;vertical-align:bottom;box-shadow:inset 2px 0 0 #666;">Cost / <br>Profit</th>' +
     '</tr>' +
     '<tr>' +
@@ -544,12 +625,15 @@ function _emec_buildHTML() {
     '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>' +
     '<th class="bgi" style="text-align:center;">kWh</th>' +
     '<th class="bgi" style="text-align:center;">SoC %</th>' +
+    '<th style="box-shadow:inset 2px 0 0 #666;text-align:center;">kW</th>' +
+    '<th class="bgi" style="text-align:center;">kWh</th>' +
+    '<th class="bgi" style="text-align:center;">SoC %</th>' +
     '</tr>' +
     '</thead>' +
     '</table>' +
     '<div class="wrap"><table class="dt">' +
     _EMEC_COLGROUP +
-    '<tbody id="tb-past"><tr><td colspan="16" class="msg">⏳ Select range to load...</td></tr></tbody>' +
+    '<tbody id="tb-past"><tr><td colspan="19" class="msg">⏳ Select range to load...</td></tr></tbody>' +
     '</table></div>' +
     '</div>' +
     _emec_buildLegend() +
@@ -1173,7 +1257,7 @@ class EmEventsCard extends HTMLElement {
         }
         this._pastState = 'loading';
         const tb = sr.getElementById('tb-past');
-        if (tb) tb.innerHTML = '<tr><td colspan="16" class="msg">⏳ Loading today\'s data...</td></tr>';
+        if (tb) tb.innerHTML = '<tr><td colspan="19" class="msg">⏳ Loading today\'s data...</td></tr>';
         this._loadPast();
       } else {
         console.log('⏭️  Skipping auto-load. _pastState is not "idle"');
@@ -1199,7 +1283,7 @@ class EmEventsCard extends HTMLElement {
       sel.addEventListener('change', () => {
         this._pastState = 'loading';
         const tb = this.shadowRoot.getElementById('tb-past');
-        if (tb) tb.innerHTML = '<tr><td colspan="16" class="msg">⏳ Fetching history...</td></tr>';
+        if (tb) tb.innerHTML = '<tr><td colspan="19" class="msg">⏳ Fetching history...</td></tr>';
         this._loadPast();
       });
     }
@@ -1681,6 +1765,9 @@ class EmEventsCard extends HTMLElement {
       '<td class="bgl" style="text-align:right;font-weight:bold;font-size:10px;color:#666;vertical-align:middle;">Charge</td>' +
       '<td class="bgi" style="text-align:right;vertical-align:middle;">' + fmtBattChg(dk.battChg) + '</td>' +
       '<td class="bgl" style="vertical-align:middle;"></td>' +
+      '<td class="bgl" style="vertical-align:middle;">Total</td>' +
+      '<td class="bgi" style="vertical-align:middle;">' + fmtKd(dk.ev || 0) + '</td>' +
+      '<td class="bgi" style="vertical-align:middle;"></td>' +
       '<td class="bgl" style="text-align:right;color:' + dayColor + ';font-weight:bold;vertical-align:middle;">' + dayCostLabel + '</td>' +
       '</tr>';
     
@@ -1699,6 +1786,9 @@ class EmEventsCard extends HTMLElement {
       '<td class="bgl" style="text-align:right;font-weight:bold;font-size:10px;color:#666;vertical-align:middle;">Disch.</td>' +
       '<td class="bgi" style="text-align:right;vertical-align:middle;">' + fmtBattDis(dk.battDis) + '</td>' +
       '<td class="bgl" style="vertical-align:middle;"></td>' +
+      '<td class="bgl" style="vertical-align:middle;"></td>' +
+      '<td class="bgi" style="vertical-align:middle;"></td>' +
+      '<td class="bgi" style="vertical-align:middle;"></td>' +
       '<td class="bgl" style="vertical-align:middle;"></td>' +
       '</tr>';
     
@@ -1734,6 +1824,9 @@ class EmEventsCard extends HTMLElement {
       '<td class="bgl" style="text-align:right;font-weight:bold;font-size:10px;color:#666;vertical-align:middle;">Charge</td>' +
       '<td class="bgi" style="text-align:right;vertical-align:middle;">' + fmtBattChg(dk.battChg) + '</td>' +
       '<td class="bgl" style="vertical-align:middle;"></td>' +
+      '<td class="bgl" style="vertical-align:middle;">Total</td>' +
+      '<td class="bgi" style="vertical-align:middle;">' + fmtKd(dk.ev || 0) + '</td>' +
+      '<td class="bgi" style="vertical-align:middle;"></td>' +
       '<td class="bgl" style="text-align:right;color:' + dayColor + ';font-weight:bold;vertical-align:middle;">' + dayCostLabel + '</td>' +
       '</tr>';
     
@@ -1753,6 +1846,9 @@ class EmEventsCard extends HTMLElement {
       '<td class="bgi" style="text-align:right;vertical-align:middle;">' + fmtBattDis(dk.battDis) + '</td>' +
       '<td class="bgl" style="vertical-align:middle;"></td>' +
       '<td class="bgl" style="vertical-align:middle;"></td>' +
+      '<td class="bgi" style="vertical-align:middle;"></td>' +
+      '<td class="bgi" style="vertical-align:middle;"></td>' +
+      '<td class="bgl" style="vertical-align:middle;"></td>' +
       '</tr>';
     
     return row1 + row2;
@@ -1766,6 +1862,9 @@ class EmEventsCard extends HTMLElement {
     const solarKw    = row.inputs.pv_kw      || 0;
     const loadKw  = row.inputs.load_kw    || 0;
     const soc     = row.inputs.soc_pct_start || 0;
+    const evKw = Math.max(0, Number(row.ev?.charge_kw ?? row.inputs.ev_charge_kw) || 0);
+    const evSoc = _emec_evNumber(row.ev?.ev_soc);
+    const evSolarKw = Math.max(0, Number(row.ev?.solar_kw ?? row.inputs.ev_solar_kw) || 0);
     const rowStepH = (row.interval_minutes || meta?.step_minutes || 30) / 60;
     let { buyP, sellP, inSuper, stdSellP, otherSellP, mins, stdStart, stdEnd } = _emec_getPrices(ts, provider, this._hass, row.inputs.buy_price || 0, row.inputs.sell_price || 0);
     const impKw   = row.expected.grid_import_kw      || 0;
@@ -1798,6 +1897,7 @@ class EmEventsCard extends HTMLElement {
 
     const cls = _emec_classifyFuture(row.mode, solarKw, impKw, expKw, battCKw, battDKw, curtail, soc, gridThreshold);
     if (!cls) return null;
+    if (evKw > 0) cls.label += ' + 🚗 EV charging';
 
     // Check if grid export is surplus PV (solar covers home + battery + export from solar alone)
     const surplusPV = solarKw >= (loadKw + battCKw) && expKw > gridThreshold && impKw < gridThreshold;
@@ -1832,7 +1932,7 @@ class EmEventsCard extends HTMLElement {
     const fBattKwh  = battKw  * rowStepH;
 
     // Calculate curtailed solar power (surplus PV that's being curtailed)
-    const curtailedKw = Math.max(0, solarKw - (loadKw + battCKw + expKw));
+    const curtailedKw = Math.max(0, solarKw - (loadKw + battCKw + expKw + evSolarKw));
     const fCurtailedKwh = curtailedKw * rowStepH;
 
     // Calculate kWh thresholds based on interval and column-specific kW thresholds
@@ -1898,6 +1998,9 @@ class EmEventsCard extends HTMLElement {
       '<td class="bgl">' + fmtBKw(battKw) + '</td>' +
       '<td class="bgi">' + fmtBKwh(fBattKwh) + '</td>' +
       '<td class="bgi"><span style="color:' + socCol + ';">' + soc.toFixed(1) + '</span></td>' +
+      '<td class="bgl">' + _emec_evFmt(evKw) + '</td>' +
+      '<td class="bgi">' + _emec_evFmt(evKw * rowStepH) + '</td>' +
+      '<td class="bgi">' + (evSoc == null ? '—' : evSoc.toFixed(1)) + '</td>' +
       '<td class="bgl"><span style="color:' + costCol + ';font-weight:bold;">' + costFmt.disp + '</span></td>' +
       '</tr>';
   }
@@ -1910,7 +2013,7 @@ class EmEventsCard extends HTMLElement {
 
     const planState = this._hass?.states['sensor.energy_manager_plan'];
     if (!planState) {
-      tbody.innerHTML = '<tr><td colspan="16" class="err">⚠️ sensor.energy_manager_plan not found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="19" class="err">⚠️ sensor.energy_manager_plan not found</td></tr>';
       return;
     }
 
@@ -1951,7 +2054,7 @@ class EmEventsCard extends HTMLElement {
 
 
     if (!timeline.length) {
-      tbody.innerHTML = '<tr><td colspan="16" class="err">⚠️ No timeline data found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="19" class="err">⚠️ No timeline data found</td></tr>';
       return;
     }
 
@@ -1974,12 +2077,14 @@ class EmEventsCard extends HTMLElement {
       const rBattD  = row.expected.battery_discharge_kw || 0;
       const solarKw = row.inputs.pv_kw || 0;
       const loadKw  = row.inputs.load_kw || 0;
-      const curtailedKw = Math.max(0, solarKw - (loadKw + rBattC + rExpKw));
+      const evKw = Math.max(0, Number(row.ev?.charge_kw ?? row.inputs.ev_charge_kw) || 0);
+      const evSolarKw = Math.max(0, Number(row.ev?.solar_kw ?? row.inputs.ev_solar_kw) || 0);
+      const curtailedKw = Math.max(0, solarKw - (loadKw + rBattC + rExpKw + evSolarKw));
       const net = (rImpKw * buyP - rExpKw * sellP) * rowStepH;
       if (day !== curDay) {
         if (curDay) { dailyCosts[curDay] = Math.round(curTotal * 10000) / 10000; dailyKwh[curDay] = { ...curKwh }; }
         curDay = day; curTotal = net;
-        curKwh = { load: (row.inputs.load_kw||0)*rowStepH, pv: (row.inputs.pv_kw||0)*rowStepH, gridImp: rImpKw*rowStepH, gridExp: rExpKw*rowStepH, battChg: rBattC*rowStepH, battDis: rBattD*rowStepH, curtail: curtailedKw*rowStepH };
+        curKwh = { load: (row.inputs.load_kw||0)*rowStepH, pv: (row.inputs.pv_kw||0)*rowStepH, gridImp: rImpKw*rowStepH, gridExp: rExpKw*rowStepH, battChg: rBattC*rowStepH, battDis: rBattD*rowStepH, curtail: curtailedKw*rowStepH, ev: evKw*rowStepH };
       } else {
         curTotal += net;
         curKwh.load   += (row.inputs.load_kw||0) * rowStepH;
@@ -1989,6 +2094,7 @@ class EmEventsCard extends HTMLElement {
         curKwh.battChg += rBattC * rowStepH;
         curKwh.battDis += rBattD * rowStepH;
         curKwh.curtail += curtailedKw * rowStepH;
+        curKwh.ev += evKw * rowStepH;
         curKwh.battDis += rBattD * rowStepH;
       }
     }
@@ -2238,8 +2344,8 @@ class EmEventsCard extends HTMLElement {
       const lookup = {};
       for (const [eid, states] of Object.entries(result)) {
         lookup[eid] = states.map(s => ({
-          t: (s.lu !== undefined ? s.lu : s.lc) * 1000,
-          s: s.s
+          t: s.lu !== undefined || s.lc !== undefined ? (s.lu ?? s.lc) * 1000 : new Date(s.last_updated || s.last_changed).getTime(),
+          s: s.s ?? s.state
         })).sort((a,b) => a.t - b.t);
       }
 
@@ -2252,7 +2358,7 @@ class EmEventsCard extends HTMLElement {
           setTimeout(() => this._loadPast(), 500);
           return;
         }
-        tb.innerHTML = '<tr><td colspan="16" class="msg">⚠️ No sensor data for this period.</td></tr>';
+        tb.innerHTML = '<tr><td colspan="19" class="msg">⚠️ No sensor data for this period.</td></tr>';
         st.textContent = 'No data';
         this._pastState = 'ready';
         return;
@@ -2261,9 +2367,12 @@ class EmEventsCard extends HTMLElement {
       const step    = 5 * 60 * 1000;
       const startMs = Math.ceil(start.getTime() / step) * step;
       const entries = [];
-      for (let t = startMs; t <= end.getTime(); t += step) entries.push(t);
+      for (let t = startMs; t < end.getTime(); t += step) entries.push(t);
       entries.reverse();
 
+      const phases = Number(this._hass.states['input_select.em_ev_site_phases']?.state) === 3 ? 3 : 1;
+      const evHistory = new Map(entries.map(ts => [ts,
+        _emec_evHistory(lookup, ts, Math.min(ts + step, end.getTime()), phases)]));
       const pastDailyCosts = {};
       const pastDailyKwh = {};
 
@@ -2301,6 +2410,7 @@ class EmEventsCard extends HTMLElement {
         pastDailyKwh[dayStr].battChg += battCKw * stepHP;
         pastDailyKwh[dayStr].battDis += battDKw * stepHP;
         pastDailyKwh[dayStr].curtail += curtailedKw * stepHP;
+        pastDailyKwh[dayStr].ev = (pastDailyKwh[dayStr].ev || 0) + (evHistory.get(ts).kwh || 0);
       }
 
       const rows = [];
@@ -2347,9 +2457,13 @@ class EmEventsCard extends HTMLElement {
         const cost = (gridImpKw * buyP - gridExpKw * sellP) * stepHP;
 
         const soc     = parseFloat(_emec_getAt(lookup['sensor.inverter_battery_level'],            ts)) || 0;
-        if (soc === 0 && battCKw === 0 && battDKw === 0 && loadKw === 0) continue;
+        const ev = evHistory.get(ts);
+        if (soc === 0 && battCKw === 0 && battDKw === 0 && loadKw === 0 && !ev.active) continue;
 
         const cls     = _emec_classifyPast(solarKw, gridImpKw, gridExpKw, battCKw, battDKw, gridThreshold);
+        if (ev.active) cls.label += ' + 🚗 EV charging';
+        const evTitle = 'Average charging current: ' + (ev.amps == null ? 'unavailable' : ev.amps.toFixed(2) + ' A') +
+          '; power calculated at 230 V per phase; ' + (ev.estimated ? 'kWh estimated from current' : 'kWh from session meter increases');
         
         // Check if grid export is surplus PV (solar covers home + battery + export from solar alone)
         const surplusPV = solarKw >= (loadKw + battCKw) && gridExpKw > gridThreshold && gridImpKw < gridThreshold;
@@ -2448,6 +2562,9 @@ class EmEventsCard extends HTMLElement {
           '<td class="bgl">' + fmtBKw(battKw) + '</td>' +
           '<td class="bgi">' + fmtBKwh(eBatt) + '</td>' +
           '<td class="bgi"><span style="color:' + socCol  + ';">' + soc.toFixed(1)   + '</span></td>' +
+          '<td class="bgl" title="' + evTitle + '">' + _emec_evFmt(ev.kw) + '</td>' +
+          '<td class="bgi" title="' + evTitle + '">' + _emec_evFmt(ev.kwh) + '</td>' +
+          '<td class="bgi">—</td>' +
           '<td class="bgl"><span style="color:' + costCol + ';font-weight:bold;">' + costDisp + '</span></td>' +
           '</tr>');
       }
@@ -2466,7 +2583,7 @@ class EmEventsCard extends HTMLElement {
 
     } catch(e) {
       const tb2 = this.shadowRoot.getElementById('tb-past');
-      if (tb2) tb2.innerHTML = '<tr><td colspan="16" class="err">⚠️ ' + e.message + '</td></tr>';
+      if (tb2) tb2.innerHTML = '<tr><td colspan="19" class="err">⚠️ ' + e.message + '</td></tr>';
       const st2 = this.shadowRoot.getElementById('st-past');
       if (st2) st2.textContent = 'Error — ' + e.message.slice(0,60);
       this._pastState = 'ready';
