@@ -345,5 +345,11 @@ mqtt:
       state_topic: "energymanager/motd_general/state"
       json_attributes_topic: "energymanager/motd_general/attrs"
       icon: mdi:bullhorn
+
+    - name: "Energy Manager Changelog"
+      unique_id: energy_manager_changelog
+      state_topic: "energymanager/changelog/state"
+      json_attributes_topic: "energymanager/changelog/attrs"
+      icon: mdi:bullhorn
       
       # === ENERGY_MANAGER_MQTT_SENSORS_END ===
