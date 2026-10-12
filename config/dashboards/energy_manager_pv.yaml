@@ -3315,7 +3315,7 @@ views:
                 Click "Install Update" above to upgrade.
     cards: []
   - type: sections
-    max_columns: 2
+    max_columns: 3
     icon: mdi:information-outline
     path: ""
     sections:
@@ -3338,5 +3338,13 @@ views:
                ---
               _Title: General Information
               Updated: {{ state_attr('sensor.energy_manager_general', 'updated') }}_
-
+      - type: grid
+        cards:
+          - type: markdown
+            content: |
+              {{ state_attr('sensor.energy_manager_changelog', 'md') }}
+               
+               ---
+              _Title: Changelog
+              Updated: {{ state_attr('sensor.energy_manager_changelog', 'updated') }}_
 
