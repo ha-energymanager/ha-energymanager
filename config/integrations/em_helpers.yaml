@@ -925,7 +925,7 @@ input_number:
   price_1_normal_mode:
     name: price_1_normal_mode
     min: 0
-    max: 20
+    max: 25
     step: 0.01
     mode: box
     icon: mdi:currency-usd
@@ -933,7 +933,7 @@ input_number:
   price_2_normal_mode:
     name: price_2_normal_mode
     min: 0
-    max: 20
+    max: 25
     step: 0.01
     mode: box
     icon: mdi:currency-usd
@@ -941,7 +941,7 @@ input_number:
   price_3_normal_mode:
     name: price_3_normal_mode
     min: 0
-    max: 20
+    max: 25
     step: 0.01
     mode: box
     icon: mdi:currency-usd
@@ -949,7 +949,7 @@ input_number:
   price_4_normal_mode:
     name: price_4_normal_mode
     min: 0
-    max: 20
+    max: 25
     step: 0.01
     mode: box
     icon: mdi:currency-usd
@@ -957,7 +957,7 @@ input_number:
   price_5_normal_mode:
     name: price_5_normal_mode
     min: 0
-    max: 20
+    max: 25
     step: 0.01
     mode: box
     icon: mdi:currency-usd
@@ -965,7 +965,7 @@ input_number:
   price_6_normal_mode:
     name: price_6_normal_mode
     min: 0
-    max: 20
+    max: 25
     step: 0.01
     mode: box
     icon: mdi:currency-usd
@@ -982,7 +982,7 @@ input_number:
   high_sell_price:
     name: high_sell_price
     min: 0
-    max: 1500
+    max: 2500
     step: 1
     unit_of_measurement: "c"
     mode: box
@@ -1059,7 +1059,7 @@ input_number:
   grid_sell_price_day:
     name: grid_sell_price_day
     min: 0
-    max: 2000
+    max: 2500
     step: 5
     unit_of_measurement: "c"
     mode: box
