@@ -1,3 +1,5 @@
+# Changelog
+
 <details open>
 <summary><strong>1.3.0 - 2026-10-xx</strong></summary>
 
