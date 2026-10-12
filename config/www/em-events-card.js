@@ -6,7 +6,7 @@
 // Copy to /config/www/em-events-card.js
 // Add resource: /local/em-events-card.js (type: JavaScript module)
 
-const _EMEC_VERSION = 'v3.6.0';
+const _EMEC_VERSION = 'v3.6.1';
 
 let _EMEC_CUR = '$';
 
@@ -32,6 +32,7 @@ const _EMEC_SENSORS = [
   'sensor.charger_current_import',
   'sensor.charger_energy_session',
   'sensor.charger_status_connector',
+  'input_number.em_ev_current_soc',
   'input_select.em_ev_site_phases',
 ];
 
@@ -89,7 +90,9 @@ function _emec_evHistory(lookup, start, end, fallbackPhases) {
   if (estimated) kwh = complete ? powerMs / 3600000 : null;
   const chargingStatus = String(_emec_getAt(statuses, start)).toLowerCase() === 'charging' ||
     statuses.some(x => x.t > start && x.t < end && String(x.s).toLowerCase() === 'charging');
-  return { kw, amps, kwh, estimated,
+  const recordedSoc = _emec_evNumber(_emec_getAt(lookup['input_number.em_ev_current_soc'], start));
+  const soc = recordedSoc != null && recordedSoc <= 100 ? recordedSoc : null;
+  return { kw, amps, kwh, estimated, soc,
     active: powerMs > 0 || kwh > 0 || chargingStatus };
 }
 
@@ -2564,7 +2567,7 @@ class EmEventsCard extends HTMLElement {
           '<td class="bgi"><span style="color:' + socCol  + ';">' + soc.toFixed(1)   + '</span></td>' +
           '<td class="bgl" title="' + evTitle + '">' + _emec_evFmt(ev.kw) + '</td>' +
           '<td class="bgi" title="' + evTitle + '">' + _emec_evFmt(ev.kwh) + '</td>' +
-          '<td class="bgi">—</td>' +
+          '<td class="bgi" title="Recorded EV SoC at the start of this interval">' + (ev.soc == null ? '—' : ev.soc.toFixed(1)) + '</td>' +
           '<td class="bgl"><span style="color:' + costCol + ';font-weight:bold;">' + costDisp + '</span></td>' +
           '</tr>');
       }
