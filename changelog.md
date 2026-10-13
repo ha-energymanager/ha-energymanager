@@ -10,13 +10,12 @@
 * All entities now YAML based (removal of UI entities via migration script)
 #### Changed
 * EV update - changed decisions to be made once per minute when EV is being charged. This gives a more granular reading for the solar_only and solar_preferred policies.
-* Updated em-events-card.js tp v3.x.x
 * Sigenergy - EMS mode now on for self-consumption to fix issue found in firmware 116 & 117
-* Energy Plan - now supports EV charging forecast and past events
+* Energy Plan - now supports EV charging forecast and past events (events card v3.5.0)
 #### Fixed
 * Energy_manager_overview.yaml 24hr chart not showing, fixed
-* House load not calculated correctly in Other provider Node-RED
-* Bug where if export price (for DIY/Other) is for a 24hr period that it would fail to detect the period
+* House load not calculated correctly in "Other\DIY" provider Node-RED
+* Bug where if export price (for Other\DIY) is for a 24hr period that it would fail to detect the period
 * Removal of "# Goodwe not supported" in em_scripts.yaml (current_reserved_soc_backup), was producing entry in system log
 
 </details>
