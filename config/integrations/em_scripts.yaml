@@ -2998,8 +2998,6 @@ script:
               {{ states('sensor.sigenergy_reserved_soc_backup') | float(0) }}
             {% elif brand == 'alphaess' %}
               {{ states('sensor.alphaess_ups_reserve_soc') | float(0) }}
-            {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
-              # Goodwe, not supported
             {% elif brand == 'fronius' %}
               {% set sf = states('sensor.fronius_energy_percent_sf') | float(0) %}
               {{ (states('sensor.fronius_reserved_soc_backup') | float(0) * (10 ** sf)) }}
@@ -3007,6 +3005,7 @@ script:
               {{ states('sensor.solaredge_reserved_soc') | float(0) }}
             {% endif %}
           retain: true
+          # Goodwe, not supported
       - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/current_max_charge_power/state"
