@@ -99,6 +99,24 @@ Energy Manager requires a clean, dedicated Home Assistant OS installation. It is
 
 ---
 
+## 🤝 Community Support
+
+Energy Manager is designed to be a self-managed solution, with support provided through our community on Discord.
+
+Our Discord community is a place where users can ask questions, share experiences, exchange configuration tips and help one another get the most out of Energy Manager.
+
+Whether you're getting started, exploring advanced features or troubleshooting an issue, you're welcome to join the conversation and benefit from the knowledge and experience of other users.
+
+**Please note that Energy Manager operates on a community-supported basis.** Individual technical assistance, personalised troubleshooting and direct developer support are not included with the subscription. Community assistance is provided voluntarily, so responses and resolutions cannot be guaranteed.
+
+We encourage everyone to contribute where they can. Sharing your experiences, solutions and ideas helps build a stronger and more useful community for everyone.
+
+### 💬 [Join the Energy Manager Discord Community →](https://discord.gg/yeVxvmADKn)
+
+*Thank you for being part of the Energy Manager community and helping make it a welcoming and supportive place for everyone.*
+
+---
+
 ## 🚀 Put Your Solar & Battery to Work
 
 You've already invested in solar panels and battery storage. Why settle for basic charging schedules when your system could be making smarter energy decisions throughout the day?
