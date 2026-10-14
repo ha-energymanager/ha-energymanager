@@ -6,7 +6,7 @@
 // Copy to /config/www/em-events-card.js
 // Add resource: /local/em-events-card.js (type: JavaScript module)
 
-const _EMEC_VERSION = 'v3.5.1b';
+const _EMEC_VERSION = 'v3.5.1j';
 
 let _EMEC_CUR = '$';
 
@@ -164,9 +164,9 @@ function _emec_evHistory(lookup, start, end, fallbackPhases) {
 }
 
 // Dynamic COLGROUP builder - conditionally includes Curtailed and EV columns
-function _emec_buildColgroup(colSettings) {
+function _emec_buildColgroup(colSettings, isPast = false) {
   if (!colSettings) colSettings = { curtail: true };
-  console.log('🏗️ _emec_buildColgroup called. colSettings:', colSettings, 'curtail !== false?:', colSettings.curtail !== false, 'ev?:', colSettings.ev !== false);
+  console.log('🏗️ _emec_buildColgroup called. isPast:', isPast, 'colSettings:', colSettings, 'curtail !== false?:', colSettings.curtail !== false, 'ev?:', colSettings.ev !== false);
   let cols = [
     '<col style="width:52px;">',                    // Time
     '<col style="width:auto; min-width:154px;">',  // Decision
@@ -174,12 +174,18 @@ function _emec_buildColgroup(colSettings) {
     '<col style="width:68px;">',                   // Sell $/kWh
     '<col style="width:54px;">',                   // Load kW
     '<col style="width:56px;">',                   // Load kWh
-    '<col style="width:54px;">',                   // Solar Forecast kW
+  ];
+
+  // Past tab has an extra Solar Forecast (FCST) column; Future only has Solar kW + kWh
+  if (isPast) {
+    cols.push('<col style="width:54px;">');       // Solar Forecast kW (Past only)
+  }
+  cols.push(
     '<col style="width:54px;">',                   // Solar kW
     '<col style="width:56px;">',                   // Solar kWh
     '<col style="width:54px;">',                   // Grid kW
     '<col style="width:56px;">',                   // Grid kWh
-  ];
+  );
   
   // CONDITIONAL: Add Curtailed columns only if enabled
   if (colSettings.curtail !== false) {
@@ -215,7 +221,7 @@ function _emec_buildColgroup(colSettings) {
   );
   
   const result = '<colgroup>' + cols.join('') + '</colgroup>';
-  console.log('🏗️ _emec_buildColgroup returning', cols.length, 'columns');
+  console.log('🏗️ _emec_buildColgroup returning', cols.length, 'columns (isPast=' + isPast + ')');
   return result;
 }
 
@@ -2516,7 +2522,9 @@ class EmEventsCard extends HTMLElement {
     Promise.resolve().then(() => {
       this._headerRebuildScheduled = false;
       
-      const colgroup_html = _emec_buildColgroup(this._columnSettings);
+      // Future has 2 solar cols; Past has 3 (includes Forecast/FCST) — use matching colgroups
+      const colgroup_future = _emec_buildColgroup(this._columnSettings, false);
+      const colgroup_past   = _emec_buildColgroup(this._columnSettings, true);
       const thead_future_html = _emec_buildTheadFuture(this._columnSettings);
       const thead_past_html = _emec_buildTheadPast(this._columnSettings);
 
@@ -2525,7 +2533,7 @@ class EmEventsCard extends HTMLElement {
       // Update FUTURE sticky header table (dt-head) - only place with header row
       const futureHeadTable = this.shadowRoot.querySelector('table.dt-head');
       if (futureHeadTable) {
-        futureHeadTable.innerHTML = colgroup_html + thead_future_html;
+        futureHeadTable.innerHTML = colgroup_future + thead_future_html;
         console.log('✅ FUTURE sticky header rebuilt');
       }
 
@@ -2535,7 +2543,7 @@ class EmEventsCard extends HTMLElement {
         const futureDataTable = tbodyFuture.closest('table.dt:not(.dt-head)');
         if (futureDataTable) {
           const currentTbodyHtml = tbodyFuture.innerHTML;
-          futureDataTable.innerHTML = colgroup_html + '<tbody id="tb-future">' + currentTbodyHtml + '</tbody>';
+          futureDataTable.innerHTML = colgroup_future + '<tbody id="tb-future">' + currentTbodyHtml + '</tbody>';
           console.log('✅ FUTURE data table colgroup updated');
         }
       }
@@ -2544,7 +2552,7 @@ class EmEventsCard extends HTMLElement {
       const allHeadTables = this.shadowRoot.querySelectorAll('table.dt-head');
       if (allHeadTables.length > 1) {
         const pastHeadTable = allHeadTables[1];
-        pastHeadTable.innerHTML = colgroup_html + thead_past_html;
+        pastHeadTable.innerHTML = colgroup_past + thead_past_html;
         console.log('✅ PAST sticky header rebuilt');
       }
 
@@ -2554,7 +2562,7 @@ class EmEventsCard extends HTMLElement {
         const pastDataTable = tbodyPast.closest('table.dt:not(.dt-head)');
         if (pastDataTable) {
           const currentTbodyHtml = tbodyPast.innerHTML;
-          pastDataTable.innerHTML = colgroup_html + '<tbody id="tb-past">' + currentTbodyHtml + '</tbody>';
+          pastDataTable.innerHTML = colgroup_past + '<tbody id="tb-past">' + currentTbodyHtml + '</tbody>';
           console.log('✅ PAST data table colgroup updated');
         }
       }
@@ -2621,6 +2629,9 @@ class EmEventsCard extends HTMLElement {
       // Get configured max charge power as fallback for curtailment detection
       const hardlimitMaxChargeKw = parseFloat(this._hass?.states['input_number.battery_charge_power_hardlimit']?.state);
       const configuredMaxChargeKw = parseFloat(this._hass?.states['input_number.inverter_max_charge_power']?.state) || hardlimitMaxChargeKw;
+
+      // Get configured max SoC for battery full detection
+      const configuredMaxSoC = parseFloat(this._hass?.states['input_number.inverter_max_soc']?.state) || 98;
 
       if (!lookup['sensor.inverter_load_power']?.length) {
         const sel = this.shadowRoot.getElementById('range-past');
@@ -2817,19 +2828,22 @@ class EmEventsCard extends HTMLElement {
         if (curtailedKw > 0) {
           let isCurtailed = false;
 
-          // Check 1: Battery full - can't charge more surplus
+          // Check 1: Battery at max SoC - can't charge more surplus
           const battSoc = parseFloat(_emec_getAt(lookup['sensor.inverter_battery_level'], ts)) || 0;
-          if (battSoc > 98) {
-            isCurtailed = true; // Battery full, surplus can't be stored
+          // Get max SoC at this timestamp (sensor first, then configured fallback)
+          const maxSocAtTime = parseFloat(_emec_getAt(lookup['sensor.inverter_current_max_soc'], ts)) || configuredMaxSoC;
+          if (battSoc > maxSocAtTime) {
+            isCurtailed = true; // Battery at max SoC, surplus can't be stored
           }
 
           // Check 2: Export power limit being hit
           const exportLimitKw = (parseFloat(_emec_getAt(lookup['sensor.inverter_current_export_power_limit'], ts)) || 0) / 1000;
           const actualExportKw = Math.abs(gridExpKw);
+          const gridThreshold = (this._settings?.gridThreshold || 50) / 1000; // Use same threshold as grid display filter
           if (exportLimitKw > 0) {
             const exportHeadroom = exportLimitKw - actualExportKw;
-            if (exportHeadroom < 0.2) {
-              isCurtailed = true; // Less than 200W headroom to export limit
+            if (exportHeadroom < gridThreshold) {
+              isCurtailed = true; // Export headroom less than grid threshold, hitting export limit
             }
           }
 
