@@ -6,7 +6,7 @@
 // Copy to /config/www/em-events-card.js
 // Add resource: /local/em-events-card.js (type: JavaScript module)
 
-const _EMEC_VERSION = 'v3.5.1j';
+const _EMEC_VERSION = 'v3.5.1';
 
 let _EMEC_CUR = '$';
 
