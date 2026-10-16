@@ -562,7 +562,7 @@ views:
                   .replace('BY:','Buy band:')
                   .replace('SL:','Sell band:')
                   .replace('CT:','Curtailment:')
-                  .replace('ENOW','Export now:')
+                  .replace('ENOW:','Export now:')
                   .replace('Plan: NSCR','Plan: No scheduled charge required')
                   .replace('CRFEH','Charge reduced: Forecasted export headroom')
                   .replace('DRUNAV:','Dynamic reserve unavailable:')
