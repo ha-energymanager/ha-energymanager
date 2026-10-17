@@ -2085,8 +2085,7 @@
                   "calcs": [
                     "lastNotNull"
                   ],
-                  "fields": "/^homeassistant_sensor_unit_w\\{domain=\"sensor\",entity=\"sensor\\.inverter_current_export_power_limit\",friendly_name=\"Inverter Current Export Power 
-Limit\",instance=\"homeassistant\",job=\"home\\-assistant\"\\}$/",
+                  "fields": "/^homeassistant_sensor_unit_w\\{domain=\"sensor\",entity=\"sensor\\.inverter_current_export_power_limit\",friendly_name=\"Inverter Current Export Power Limit\",instance=\"homeassistant\",job=\"home\\-assistant\"\\}$/",
                   "values": false
                 },
                 "showPercentChange": false,
