@@ -2764,13 +2764,13 @@ template:
     unique_id: em_yaml_grid_buy_price
     default_entity_id: sensor.grid_buy_price
     state: '{{ states(''sensor.nodered_buyprice'') | float(0) | round(2) }}'
-    state_class: measurement
+    unit_of_measurement: "AUD/kWh"
     
   - name: Grid Sell Price
     unique_id: em_yaml_grid_sell_price
     default_entity_id: sensor.grid_sell_price
     state: '{{ states(''sensor.nodered_sellprice'') | float(0) | round(2) }}'
-    state_class: measurement
+    unit_of_measurement: "AUD/kWh"
     
   - name: BOM Last Updated
     unique_id: em_yaml_bom_last_updated
