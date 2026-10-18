@@ -15,7 +15,7 @@ Github is now the source location for any updates. The **ha-energymanager** repo
 A new entity, found on the PV Dashboard settings page, allows you to select which branch of "main" or "early" you would like your updates to come from. The "Early" branch will receive updates to new version before the "main" branch, and you're welcome to select "early" if you wish to obtain earlier updates. Just remember there is more risk using the "early" branch because less people will have tested it. If you use "early" there is an expectation that you will report any bugs that you find so that when it is later released to "main" they have been removed.
 
 The procedure for new releases will always proceed through the following order:
-1. Updates are made to "development". You should not use this branch as it will guaranteed to break your Energy Manager.
+1. Updates are made to "development". You should not use this branch as it will be guaranteed to break your Energy Manager.
 2. Updates are pushed from "development" to "test". You should not use this branch as it is still likely that it will break your Energy Manager.
 3. Updates are pushed from "test" to "early". If you would like to receive early updates, select this branch. By the time the code gets to this branch, it has travelled through both "development" and "test", bugs fixed, and then moved to "early". There is still a chance of bugs being present, but less likely than the previous "test" branch.
 4. Shortly after "early" is released, the "main" branch will get updated and the update is released as GA.
