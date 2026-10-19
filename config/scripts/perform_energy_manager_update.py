@@ -32,6 +32,7 @@ sys.path.append('/config/scripts')
 
 from update_checker import EnergyManagerUpdateChecker, version_tuple
 from file_merger import EnergyManagerFileMerger
+from hacs_manager import sync_hacs_components
 
 def cleanup_old_backups():
     try:
@@ -1132,10 +1133,27 @@ try:
     installed_version = version_tuple(result['current_version'])
 
     if not should_update:
-        print("No updates available")
-        update_dashboard_status("No updates available. System is up to date.", "success")
+        print("Checking HACS dependencies...")
+        update_dashboard_status("Checking HACS dependencies...", "info")
+
+        hacs_changes = sync_hacs_components(
+            result['manifest'].get('hacs_components', [])
+        )
+
+        if hacs_changes:
+            print(f"✅ HACS dependencies reconciled: {len(hacs_changes)} changes")
+            update_dashboard_status(
+                f"HACS dependencies updated: {len(hacs_changes)} changes",
+                "success"
+            )
+        else:
+            print("No updates available")
+            update_dashboard_status(
+                "No updates available. System is up to date.",
+                "success"
+            )
         with open('/config/.energy_manager/update_result.txt', 'w') as f:
-            f.write("no_updates")
+            f.write("success:hacs" if hacs_changes else "no_updates")
         sys.exit(0)
     
     manifest = result.get('manifest')
@@ -1275,6 +1293,28 @@ try:
             print(f"❌ Node-RED restart error: {e}")
             print("Please restart Node-RED manually")
     
+    if success:
+        print("Processing HACS dependencies...")
+        update_dashboard_status(
+            "Processing HACS dependencies...",
+            "info"
+        )
+        try:
+            hacs_changes = sync_hacs_components(
+                manifest.get('hacs_components', [])
+            )
+            print(
+                f"✅ HACS dependencies reconciled: "
+                f"{len(hacs_changes)} changes"
+            )
+        except Exception as e:
+            print(f"❌ HACS dependency update failed: {e}")
+            update_dashboard_status(
+                f"HACS dependency update failed: {e}",
+                "error"
+            )
+            success = False
+
     if success:
         update_checker.set_current_version(manifest['version'])
         with open('/config/.energy_manager/installed_branch.txt', 'w', encoding='utf-8') as f:
