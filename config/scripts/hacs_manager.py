@@ -159,9 +159,11 @@ def sync_hacs_components(entries, dry_run=False):
             if entry['action'] == 'remove':
                 needed = installed
             else:
-                if not target:
+                if not target and version != 'latest':
                     raise RuntimeError('Cannot determine desired version: ' + name)
-                needed = not installed or repo.get('installed_version') != target
+                needed = not installed or (
+                    bool(target) and repo.get('installed_version') != target
+                )
             if not needed:
                 continue
             identifier = str(repo['id'])
@@ -176,10 +178,18 @@ def sync_hacs_components(entries, dry_run=False):
                     details = ws.call('hacs/repository/info', repository_id=identifier)
                     if target not in details.get('releases', []):
                         raise RuntimeError('Release %s unavailable for %s' % (target, name))
-                ws.call('hacs/repository/download', repository=identifier, version=target)
+                    ws.call('hacs/repository/download',
+                            repository=identifier, version=target)
+                else:
+                    # Let HACS resolve the latest available version.
+                    ws.call('hacs/repository/download',
+                            repository=identifier)
             verified = ws.call('hacs/repository/info', repository_id=identifier)
             if entry['action'] == 'remove' and verified.get('installed'):
                 raise RuntimeError('Failed to verify removal: ' + name)
-            if entry['action'] == 'install' and (not verified.get('installed') or verified.get('installed_version') != target):
-                raise RuntimeError('Failed to verify installation: ' + name)
+            if entry['action'] == 'install':
+                if not verified.get('installed'):
+                    raise RuntimeError('Failed to verify installation: ' + name)
+                if version != 'latest' and verified.get('installed_version') != target:
+                    raise RuntimeError('Failed to verify version: ' + name)
     return changes
