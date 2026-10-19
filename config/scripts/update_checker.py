@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import PurePosixPath
+from hacs_manager import validate_components
 
 REPOSITORY = os.environ.get('EM_UPDATE_REPOSITORY', 'ha-energymanager/ha-energymanager')
 VERSION_RE = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
@@ -147,6 +148,7 @@ class EnergyManagerUpdateChecker:
         if flows:
             manifest_source_path(flows['download_url'])
             version_tuple(flows['new_in_version'])
+        validate_components(data.get('hacs_components', []))
         return data
 
     def check_for_updates(self, force=False):
@@ -157,8 +159,11 @@ class EnergyManagerUpdateChecker:
             result['current_version'] = self.get_current_version()
             result['commit'] = self.pin_branch()
             result['remote_version'] = self.get_remote_version()
+            result['manifest'] = self.get_update_manifest(
+                result['remote_version']
+            )
+
             if force or version_tuple(result['remote_version']) > version_tuple(result['current_version']):
-                result['manifest'] = self.get_update_manifest(result['remote_version'])
                 result['update_available'] = True
         except (OSError, ValueError, KeyError, urllib.error.URLError) as exc:
             result['error'] = str(exc)
