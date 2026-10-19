@@ -294,11 +294,13 @@ def sync_hacs_components_via_ssh(entries, dry_run=False):
         "print('__EM_HACS_RESULT__'+json.dumps(result))"
     )
 
-    remote_command = (
+    python_command = (
         'python3 -c ' + shlex.quote(remote_code)
         + ' ' + shlex.quote(payload)
     )
 
+    remote_command = 'bash -lc ' + shlex.quote(python_command)
+    
     command = [
         'ssh',
         '-i', ssh_key,
