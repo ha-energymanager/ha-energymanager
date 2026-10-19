@@ -11,9 +11,15 @@ Energy Manager has always been intended to be an affordable service, with free a
 
 Unfortunately, at this price point, providing ongoing, personalised developer support is simply not commercially sustainable. The time required to deliver that level of support would normally necessitate a significantly higher subscription fee, which goes against the goal of keeping Energy Manager accessible and affordable.
 
-**To keep Energy Manager affordable and sustainable over the long term, direct developer support will no longer be offered as part of the service.**
+<ha-alert alert-type="info">To keep Energy Manager affordable and sustainable over the long term, direct developer support will no longer be offered as part of the service.</ha-alert>
 
-Instead, Energy Manager will move to a community-based support model through Discord, where users can ask questions, share experiences, help troubleshoot issues, and assist one another. The developer will continue to participate in community discussions and offer assistance where time permits. However, developer responses should not be expected or relied upon, and individual support requests directed to the developer will generally not receive a response.
+Energy Manager will instead transition to a **community-based support model through GitHub**, providing a central location where users can ask questions, share knowledge, troubleshoot problems, and help one another.
+
+**GitHub Discussions** will be the primary place for general support questions, troubleshooting, and sharing solutions, while **GitHub Issues** will be used for reporting bugs and suggesting new features. This approach also ensures that questions and solutions remain accessible and searchable for the benefit of the wider community.
+
+The developer will continue to participate in discussions and offer assistance where time permits. However, responses from the developer cannot be guaranteed, and requests for individual or private developer support will generally not receive a response.
+
+The **Discord server will remain open** as a place for general conversation, sharing experiences, and connecting with other Energy Manager users. However, support questions and technical issues should be directed to GitHub rather than Discord, helping keep information organised and accessible to everyone.
 
 This change will allow more time to be dedicated to maintaining and improving Energy Manager, developing new features, and ensuring the long-term reliability of the service. As part of this transition, the private support ticket facilities on the Energy Manager website and Discord will be discontinued. All general support discussions should instead take place in the public Discord community channels.
 
