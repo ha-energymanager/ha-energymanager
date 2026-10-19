@@ -490,8 +490,7 @@
     {
       "repository": "Makin-Things/platinum-weather-card",
       "type": "plugin",
-      "action": "remove",
-      "version": "latest"
+      "action": "remove"
     },
     {
       "repository": "rudizl/platinum-weather-card-plus-charts",
