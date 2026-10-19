@@ -7,7 +7,48 @@ import re
 import secrets
 import socket
 import struct
+import shutil
+from pathlib import Path
 
+
+def remove_local_hacs_component(relative_path):
+    if not isinstance(relative_path, str):
+        raise ValueError('Missing local_path for HACS removal')
+
+    path = Path(relative_path)
+    parts = path.parts
+
+    if (
+        path.is_absolute()
+        or '..' in parts
+        or '\\' in relative_path
+        or len(parts) < 3
+        or not (
+            (parts[:2] == ('www', 'community') and len(parts) == 3)
+            or (parts[0] == 'custom_components' and len(parts) == 2)
+        )
+    ):
+        raise ValueError('Unsafe HACS removal path: ' + relative_path)
+
+    base = Path('/config')
+    target = base / path
+
+    if not target.exists() and not target.is_symlink():
+        print('HACS component already absent: ' + relative_path)
+        return
+
+    if target.is_symlink() or not target.is_dir():
+        raise RuntimeError(
+            'Unexpected HACS installation path: ' + relative_path
+        )
+
+    shutil.rmtree(target)
+    if target.exists():
+        raise RuntimeError(
+            'HACS local removal failed: ' + relative_path
+        )
+
+    print('✅ Removed HACS files: ' + relative_path)
 
 def validate_components(items):
     if not isinstance(items, list):
@@ -32,6 +73,13 @@ def validate_components(items):
                 raise ValueError('Invalid HACS version: ' + name)
         elif 'version' in entry:
             raise ValueError('Remove action cannot specify version: ' + name)
+        if 'local_path' in entry:
+            if entry['action'] != 'remove':
+                raise ValueError(
+                    'local_path is only supported for removal: ' + name
+                )
+            if not isinstance(entry['local_path'], str):
+                raise ValueError('Invalid local_path: ' + name)
     return items
 
 class HAWebSocket:
@@ -150,6 +198,25 @@ def sync_hacs_components(entries, dry_run=False):
             name = entry['repository']
             repo = lookup.get(name.lower())
             if not repo:
+                if entry['action'] == 'remove':
+                    local_path = entry.get('local_path')
+                    if not local_path:
+                        raise RuntimeError(
+                            'Repository unavailable and no local_path '
+                            'specified for removal: ' + name
+                        )
+
+                    changes.append({
+                        'repository': name,
+                        'action': 'remove',
+                        'version': None
+                    })
+
+                    if not dry_run:
+                        remove_local_hacs_component(local_path)
+
+                    continue
+
                 raise RuntimeError('Repository not registered in HACS: ' + name)
             if repo.get('category') != entry['type']:
                 raise RuntimeError('HACS category mismatch: ' + name)
