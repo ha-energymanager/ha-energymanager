@@ -270,7 +270,7 @@ views:
           slot_r6: remove
           slot_r7: remove
           slot_r8: remove
-          type: custom:platinum-weather-card
+          type: custom:platinum-weather-card-plus-charts
           update_time_name_attr: issue_time
           update_time_use_attr: true
         - daily_forecast_days: 4
@@ -333,7 +333,7 @@ views:
           slot_r6: remove
           slot_r7: remove
           slot_r8: remove
-          type: custom:platinum-weather-card
+          type: custom:platinum-weather-card-plus-charts
           update_time_name_attr: issue_time
           update_time_use_attr: true
     - type: custom:layout-card
