@@ -32,7 +32,7 @@ sys.path.append('/config/scripts')
 
 from update_checker import EnergyManagerUpdateChecker, version_tuple
 from file_merger import EnergyManagerFileMerger
-from hacs_manager import sync_hacs_components
+from hacs_manager import sync_hacs_components_via_ssh
 
 def cleanup_old_backups():
     try:
@@ -1136,7 +1136,7 @@ try:
         print("Checking HACS dependencies...")
         update_dashboard_status("Checking HACS dependencies...", "info")
 
-        hacs_changes = sync_hacs_components(
+        hacs_changes = sync_hacs_components_via_ssh(
             result['manifest'].get('hacs_components', [])
         )
 
@@ -1300,7 +1300,7 @@ try:
             "info"
         )
         try:
-            hacs_changes = sync_hacs_components(
+            hacs_changes = sync_hacs_components_via_ssh(
                 manifest.get('hacs_components', [])
             )
             print(
