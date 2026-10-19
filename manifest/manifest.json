@@ -443,6 +443,68 @@
     "description": "Updated Node-RED flows",
     "backup_current": true,
     "new_in_version": "1.3.0"
+  },
+  "hacs_components": [
+    {
+      "repository": "thomasloven/lovelace-state-switch",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "thomasloven/lovelace-card-mod",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "bremor/bureau_of_meteorology",
+      "type": "integration",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "zachowj/hass-node-red",
+      "type": "integration",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "kinghat/tabbed-card",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "selvalt7/modern-circular-gauge",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "Makin-Things/platinum-weather-card",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "RomRider/apexcharts-card",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "BJReplay/ha-solcast-solar",
+      "type": "integration",
+      "action": "install",
+      "version": "latest"
+    },
+    {
+      "repository": "thomasloven/lovelace-layout-card",
+      "type": "plugin",
+      "action": "install",
+      "version": "latest"
+    }
+  ]
   }
-}
                                
