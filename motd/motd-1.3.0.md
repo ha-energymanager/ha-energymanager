@@ -42,5 +42,8 @@ If EV charging is in progress, Energy Manager will now check with the backend se
 
 The **events card** has been updated to include EV charging forecasts and history.
 
+### HACS component add & removes
+HACS component installs and removals, along with specified version requirements, are now included in the update script. This means that if an old component is retired by the HACS team that we can simply include the removal and/or replacement in the next update, meaning that you do not need to manually perform the work yourself.  If there are new HACS components that would improve Energy Manager, we can simply add them in to be automatically installed on the next update.
+
 ### Various other bug fixes
 Refer to the Changelog, on the right, for other bug fixes/updates included in v1.3.0
