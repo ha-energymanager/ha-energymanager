@@ -64,12 +64,11 @@ def main():
                     )
 
                 write_outputs(
-                    'update_available',
+                    'no_updates',
                     result['current_version'],
-                    'HACS dependencies require reconciliation',
-                    checker.branch
+                    branch=checker.branch
                 )
-                return 1            
+                return 0            
             write_outputs('no_updates', result['current_version'], branch=checker.branch)
             print(f"No updates available on {checker.branch}")
         return 0
