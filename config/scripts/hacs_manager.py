@@ -8,6 +8,8 @@ import secrets
 import socket
 import struct
 import shutil
+import subprocess
+import shlex
 from pathlib import Path
 
 
@@ -260,3 +262,82 @@ def sync_hacs_components(entries, dry_run=False):
                 if version != 'latest' and verified.get('installed_version') != target:
                     raise RuntimeError('Failed to verify version: ' + name)
     return changes
+
+
+def sync_hacs_components_via_ssh(entries, dry_run=False):
+    validate_components(entries)
+
+    if not entries:
+        return []
+
+    ssh_key = '/config/.energy_manager/ssh_key'
+    ssh_host = 'hassio@a0d7b954-ssh.local.hass.io'
+
+    if not os.path.isfile(ssh_key):
+        raise RuntimeError('Energy Manager SSH key is missing')
+
+    # Encode the manifest entries for transport to the SSH add-on.
+    payload = base64.b64encode(
+        json.dumps({
+            'entries': entries,
+            'dry_run': dry_run
+        }).encode('utf-8')
+    ).decode('ascii')
+
+    remote_code = (
+        "import sys,json,base64;"
+        "sys.path.insert(0,'/config/scripts');"
+        "from hacs_manager import sync_hacs_components;"
+        "data=json.loads(base64.b64decode(sys.argv[1]));"
+        "result=sync_hacs_components("
+        "data['entries'],dry_run=data['dry_run']);"
+        "print('__EM_HACS_RESULT__'+json.dumps(result))"
+    )
+
+    remote_command = (
+        'python3 -c ' + shlex.quote(remote_code)
+        + ' ' + shlex.quote(payload)
+    )
+
+    command = [
+        'ssh',
+        '-i', ssh_key,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'BatchMode=yes',
+        '-o', 'PasswordAuthentication=no',
+        ssh_host,
+        remote_command
+    ]
+
+    print('Executing HACS reconciliation via SSH...', flush=True)
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=180
+    )
+
+    if result.stdout:
+        print(result.stdout, end='', flush=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            'HACS SSH reconciliation failed: '
+            + (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f'exit code {result.returncode}'
+            )
+        )
+
+    marker = '__EM_HACS_RESULT__'
+
+    if marker not in result.stdout:
+        raise RuntimeError(
+            'HACS SSH reconciliation returned no result'
+        )
+
+    response = result.stdout.rsplit(marker, 1)[1].splitlines()[0]
+    return json.loads(response)
