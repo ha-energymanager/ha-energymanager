@@ -101,9 +101,9 @@ Energy Manager requires a clean, dedicated Home Assistant OS installation. It is
 
 ## 🤝 Community Support
 
-Energy Manager is designed to be a self-managed solution, with support provided through our community on Discord.
+Energy Manager is designed to be a self-managed solution, with support provided through **Github Discussions**. Casual chat is also available through our Discord channel.
 
-Our Discord community is a place where users can ask questions, share experiences, exchange configuration tips and help one another get the most out of Energy Manager.
+Our Discord community is a place where users can share experiences, exchange configuration tips and help one another get the most out of Energy Manager. Any configuration updates or bug fixes belong in Github code, and enhancement discussions belong in Github Discussions (with code in Github code).
 
 Whether you're getting started, exploring advanced features or troubleshooting an issue, you're welcome to join the conversation and benefit from the knowledge and experience of other users.
 
