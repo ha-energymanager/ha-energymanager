@@ -8,10 +8,11 @@
 * New update method via Github allowing community submissions
 * Safe-guard added for Flow Power users if EM tag detection file not present
 * All entities now YAML based (removal of UI entities via migration script)
+* Update script now manages HACS component addition/removal/forced version.
 #### Changed
 * EV update - changed decisions to be made once per minute when EV is being charged. This gives a more granular reading for the solar_only and solar_preferred policies.
 * Sigenergy - EMS mode now on for self-consumption to fix issue found in firmware 116 & 117
-* Energy Plan - now supports EV charging forecast and past events (events card v3.5.0)
+* Energy Plan - now supports EV charging forecast and past events (events card v3.5.1)
 #### Fixed
 * Energy_manager_overview.yaml 24hr chart not showing, fixed
 * House load not calculated correctly in "Other\DIY" provider Node-RED
