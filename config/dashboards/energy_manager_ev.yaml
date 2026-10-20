@@ -307,7 +307,7 @@ views:
                 name: Allow disable of curtailment
           - type: markdown
             content: >
-                **Battery Charging Measurement** - this can be set at either **kWh** or **Percentage** but if you select percentage you **MUST** have an independent integration installed that can read your EV battery SOC (this is not possible through OCPP), and it must be placed in your /share/ev_btattery_soc_sensor.txt file as a single line with the full entity name, for example, sensor.7x_zeekr_battery_level (this will depend on your integration and vehicle)). Otherwise, you **MUST** keep the measurement as **kWh** to support OCPP.
+                **Battery Charging Measurement** - this can be set at either **kWh** or **Percentage** but if you select percentage you **MUST** have an independent integration installed that can read your EV battery SOC (this is not possible through OCPP), and it must be placed in your /share/ev_battery_soc_sensor.txt file as a single line with the full entity name, for example, sensor.7x_zeekr_battery_level (this will depend on your integration and vehicle)). Otherwise, you **MUST** keep the measurement as **kWh** to support OCPP.
 
 
                 Ensure the **EV Circuit size in amps** is appropriate for you as Energy Manager will base max charging from your circuit size. If you set this incorrectly you may trip a fuse. For continuous load, you should set this at 80% of the circuit size.
