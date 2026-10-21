@@ -2747,7 +2747,7 @@ class EmEventsCard extends HTMLElement {
         if (soc === 0 && battCKw === 0 && battDKw === 0 && loadKw === 0) continue;
 
         // Extract EV charging power from charger sensor if available
-        const evChargeKw = (parseFloat(_emec_getAt(lookup['sensor.charger_current_import'], ts)) || 0) / 1000;
+        const evChargeKw = (parseFloat(_emec_getAt(lookup['sensor.charger_current_import'], ts)) || 0);
 
         const cls     = _emec_classifyPast(solarKw, gridImpKw, gridExpKw, battCKw, battDKw, evChargeKw, gridThreshold);
 
