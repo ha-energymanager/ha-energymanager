@@ -5,6 +5,10 @@ Energy Manager v2.0.0 introduces a new GitHub-based installation and update syst
 
 If you are running an older version of Energy Manager, you only need to run a one-time migration. After that, updates can be installed directly from your existing **Energy Manager Updates** section in Home Assistant.
 
+### Prerequisite
+
+Your Home Assistant must be updated to Core 2026.11 or later before you can migrate to the Github updater. Please make sure your Home Assistant is updated prior to continuing.
+
 ## Step 1 — Open SSH
 
 In Home Assistant, open **Advanced SSH & Web Terminal** and start the terminal (Setting > Apps > Advanced SSH & Web Terminal > Open Web UI).
