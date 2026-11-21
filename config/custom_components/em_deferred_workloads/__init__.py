@@ -20,6 +20,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
+from .automation_filter import AUTOMATION_EXCLUSIONS, excluded
 from .planner import SOURCES, nonnegative, overlaps, read_forecast, recommend, replay
 
 DOMAIN = "em_deferred_workloads"
@@ -29,6 +30,7 @@ ACTIVE = PENDING | {"starting", "running", "stopping", "stop_failed"}
 START_GRACE = 59
 MAX_ACTIVE = 12
 HISTORY = 24
+MANUAL_SKIP = "Today's run was skipped manually."
 
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
@@ -81,7 +83,7 @@ async def async_setup(hass, config):
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
-    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop):
+    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled):
         websocket_api.async_register_command(hass, command)
     if hass.is_running:
         scheduler.start(None)
@@ -134,6 +136,22 @@ async def ws_cancel_repeat(hass, connection, msg):
 async def ws_retry_stop(hass, connection, msg):
     await hass.data[DOMAIN].retry_stop(msg["job_id"])
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/unskip", vol.Required("job_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_unskip(hass, connection, msg):
+    await hass.data[DOMAIN].unskip(msg["job_id"])
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/clear_cancelled"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_clear_cancelled(hass, connection, msg):
+    count = await hass.data[DOMAIN].clear_cancelled()
+    connection.send_result(msg["id"], {"count": count})
 
 
 class Scheduler:
@@ -190,8 +208,11 @@ class Scheduler:
         return lambda: self.listeners.discard(listener)
 
     def snapshot(self):
+        now = time()
+        jobs = sorted(self.jobs.values(), key=lambda job: job["created"], reverse=True)
         return {
-            "jobs": sorted(self.jobs.values(), key=lambda job: job["created"], reverse=True),
+            "jobs": [dict(job, unskip_until=self.unskip_until(job, self.repeats, now)) for job in jobs],
+            "automation_exclusions": AUTOMATION_EXCLUSIONS,
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -200,7 +221,9 @@ class Scheduler:
         repeats = self.repeats if repeats is None else repeats
         if jobs == self.jobs and repeats == self.repeats:
             return
-        finished = sorted((job for job in jobs.values() if job["status"] not in ACTIVE),
+        now = time()
+        finished = sorted((job for job in jobs.values() if job["status"] not in ACTIVE
+                           and self.unskip_until(job, repeats, now) is None),
                           key=lambda job: job["created"], reverse=True)
         for job in finished[HISTORY:]:
             del jobs[job["id"]]
@@ -221,6 +244,12 @@ class Scheduler:
     def automation_available(self, entity):
         state = self.hass.states.get(entity) if re.fullmatch(r"automation\.[a-z0-9_]+", entity) else None
         return state is not None and state.state in ("on", "off")
+
+    def automation_selectable(self, entity):
+        if not self.automation_available(entity):
+            return False
+        state = self.hass.states.get(entity)
+        return not excluded(entity, getattr(state, "attributes", {}).get("friendly_name") or "")
 
     async def approve(self, requested):
         async with self.lock:
@@ -247,10 +276,10 @@ class Scheduler:
                     raise vol.Invalid(f"At most {MAX_ACTIVE} workloads can be active.")
                 if item["duration"] % 60:
                     raise vol.Invalid(f"{name} needs a whole-minute duration.")
-                if not self.automation_available(item["start_automation"]):
+                if not self.automation_selectable(item["start_automation"]):
                     raise vol.Invalid(f"Choose an available start automation for {name}.")
                 stop = item["stop_automation"]
-                if stop and (stop == item["start_automation"] or not self.automation_available(stop)):
+                if stop and (stop == item["start_automation"] or not self.automation_selectable(stop)):
                     raise vol.Invalid(f"Choose a different available stop automation for {name}.")
                 if "repeat" in item:
                     self.add_repeat(repeats, item, now)
@@ -290,11 +319,40 @@ class Scheduler:
                 raise vol.Invalid("Only a pending workload can be cancelled.")
             job = jobs[job_id]
             if job.get("repeat_id"):
-                job.update(status="skipped", note="Today's run was skipped manually.")
+                job.update(status="skipped", note=MANUAL_SKIP)
             else:
                 job.update(status="cancelled", note="")
             await self.commit(jobs)
             self.wake.set()
+
+    def unskip_until(self, job, repeats, now):
+        if (job["status"] != "skipped" or job["note"] != MANUAL_SKIP
+                or job.get("repeat_id") not in repeats):
+            return None
+        if job["run_date"] != datetime.fromtimestamp(now, self.schedule_zone()).date().isoformat():
+            return None
+        latest = job["approval"]["start"] if job["timing"] == "fixed" else job["deadline"] - job["duration"]
+        return latest if latest is not None and now < latest else None
+
+    async def unskip(self, job_id):
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None or self.unskip_until(job, self.repeats, time()) is None:
+                raise vol.Invalid("This run can no longer be restored for today.")
+            jobs = deepcopy(self.jobs)
+            if job["timing"] == "fixed":
+                jobs[job_id].update(status="scheduled", start=job["approval"]["start"], note="")
+            else:
+                jobs[job_id].update(status="delayed", start=None, note="Waiting for a suitable window.")
+            await self.commit(jobs)
+            self.wake.set()
+
+    async def clear_cancelled(self):
+        async with self.lock:
+            jobs = {job_id: job for job_id, job in self.jobs.items() if job["status"] != "cancelled"}
+            removed = len(self.jobs) - len(jobs)
+            await self.commit(jobs)
+            return removed
 
     async def cancel_repeat(self, repeat_id):
         async with self.lock:
