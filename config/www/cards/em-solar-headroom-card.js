@@ -104,7 +104,7 @@ function scoreWindow(intervals, start, duration, power) {
     cursor = segmentEnd;
     if (cursor === end) {
       return {
-        start, end, required, covered: Math.min(required, covered),
+        start, end, required, covered: Math.min(required, covered), shiftedCharge,
         fullSolar: required - covered <= energyTolerance,
         exportImpact: allPricesKnown ? exportImpact : null,
       };
