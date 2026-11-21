@@ -61,6 +61,7 @@ function extractIntervals(timeline, earliest) {
       start, end, headroom, flexibleSolarCharge, charge, discharge, gridExport, startSoc, endSoc,
       buyPrice: finite(inputs?.buy_price),
       sellPrice: finite(inputs?.sell_price),
+      minSoc,
       floor: minSoc === null || reserve === null ? null :
         Math.max(minSoc, reserve, forcedExport ? nonnegative(constraints?.peak_reserve_pct) ?? 0 : 0,
           tapered ? endSoc ?? 0 : 0),
@@ -158,6 +159,7 @@ function replayWindow(intervals, window, power, battery) {
   let plannedMin = 100;
   let replayMin = 100;
   let plannedEndSoc = null;
+  let endMinSoc = null;
 
   for (const interval of intervals) {
     if (interval.end <= cursor) continue;
@@ -175,6 +177,7 @@ function replayWindow(intervals, window, power, battery) {
       const baseStart = socAt(cursor);
       const baseEnd = socAt(segmentEnd);
       plannedEndSoc = baseEnd;
+      endMinSoc = interval.minSoc;
       const floor = Math.min(baseEnd, interval.floor);
 
       plannedMin = Math.min(plannedMin, baseStart, baseEnd);
@@ -244,7 +247,7 @@ function replayWindow(intervals, window, power, battery) {
   return {
     fromBattery, gridDuring, gridLater, gridLaterCost, gridAdded, gridCost, exportImpact,
     totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
-    plannedMin, replayMin, plannedEndSoc, replayEndSoc, deficit, through: cursor,
+    plannedMin, replayMin, plannedEndSoc, replayEndSoc, endMinSoc, deficit, through: cursor,
   };
 }
 
@@ -368,7 +371,7 @@ class EmSolarHeadroomCard extends HTMLElement {
           </div>
           <progress id="bar" max="1" aria-label="Forecast solar coverage"></progress>
           <div id="later-grid-impact" class="battery-impact" role="status" hidden>
-            <strong>Extra grid use after the run</strong>
+            <strong id="later-grid-impact-title"></strong>
             <p id="later-grid-impact-detail"></p>
           </div>
           <div id="battery-impact" class="battery-impact" role="status" hidden>
@@ -549,21 +552,30 @@ class EmSolarHeadroomCard extends HTMLElement {
     set("grid-cost-label", noExtraGrid ? "No extra grid use forecast" : "Extra grid cost");
     set("total-cost", formatCost(totalCost));
 
+    const endSoc = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
+    const batteryEndsLower = replay && replay.plannedEndSoc - replay.replayEndSoc >= 0.1;
+    const endsNearMinimum = batteryEndsLower && replay.endMinSoc !== null &&
+      replay.replayEndSoc <= replay.endMinSoc + 0.1;
     const laterGridImpact = get("later-grid-impact");
     const showLaterGridImpact = replay?.gridLater >= 0.005;
-    laterGridImpact.hidden = !showLaterGridImpact;
+    laterGridImpact.hidden = !(showLaterGridImpact || endsNearMinimum);
     if (showLaterGridImpact) {
       const cost = replay.gridLaterCost === null ? "Some forecast rates are unavailable." :
         formatCost(replay.gridLaterCost) + " included in the grid cost above.";
+      set("later-grid-impact-title", "Extra grid use after the run");
       set("later-grid-impact-detail", "The battery reserve limits discharge, adding " +
         formatEnergy(replay.gridLater) + " of forecast grid import after the run. " + cost);
+    } else if (endsNearMinimum) {
+      const minimum = endSoc.format(replay.endMinSoc / 100);
+      set("later-grid-impact-title", "Possible grid use after the forecast");
+      set("later-grid-impact-detail", "This run leaves the battery at or near its " + minimum +
+        " minimum when the forecast ends at " + clock.format(replay.through) +
+        ". Further grid use and cost are outside the forecast.");
     }
     
     const batteryImpact = get("battery-impact");
-    const showBatteryImpact = replay && replay.plannedEndSoc - replay.replayEndSoc >= 0.1;
-    batteryImpact.hidden = !showBatteryImpact;
-    if (showBatteryImpact) {
-      const endSoc = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
+    batteryImpact.hidden = !batteryEndsLower;
+    if (batteryEndsLower) 
       const planned = endSoc.format(replay.plannedEndSoc / 100);
       const withLoad = endSoc.format(replay.replayEndSoc / 100);
       set("battery-impact-detail", "At forecast end, " + withLoad + " with this load vs " +
