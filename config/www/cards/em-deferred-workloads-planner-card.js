@@ -55,8 +55,11 @@ function extractIntervals(timeline, earliest) {
 
     const tapered = forcedExport && discharge > 0 &&
       gridExport + 0.005 < nonnegative(controls?.force_export_kw);
+
+    const flexibleSolarCharge = canSelfConsume && gridImport <= forecastRoundingKw &&
+      discharge <= forecastRoundingKw ? Math.min(charge, Math.max(0, solar - totalLoad - headroom)) : 0;
     intervals.push({
-      start, end, headroom, charge, discharge, gridImport, gridExport, startSoc, endSoc,
+      start, end, headroom, flexibleSolarCharge, charge, discharge, gridImport, gridExport, startSoc, endSoc,
       evBattery: nonnegative(inputs?.ev_battery_kw ?? row.ev?.battery_kw) ?? 0,
       importLimit: nonnegative(controls?.import_limit_kw),
       chargeTarget: nonnegative(constraints?.max_soc_pct),
@@ -80,8 +83,10 @@ function extractIntervals(timeline, earliest) {
 const sources = [
   ["solar", "Surplus solar only"],
   ["battery", "Solar + battery"],
+  ["priority", "Solar before battery charging"],
   ["grid", "Grid allowed"],
 ];
+const sourceOrder = { solar: 0, priority: 1, battery: 2, grid: 3 };
 const beamWidth = 12;
 const forecastRoundingKw = 0.005;
 
@@ -102,13 +107,15 @@ function addCost(total, energy, rate) {
   return total === null || rate === null ? null : total + energy * rate;
 }
 
-// Replay all assigned workloads against one forecast. Earlier battery use
-// carries forward into later workloads and normal household consumption.
 function evaluateSchedule(intervals, placements, battery) {
-  const jobs = placements.map(window => ({ ...window, solar: 0, battery: 0, grid: 0, cost: 0 }));
-  // Constrained workloads have first claim on the sources they can use.
-  jobs.sort((a, b) => a.sourceIndex - b.sourceIndex || a.id - b.id);
+  const jobs = placements.map(window => ({
+    ...window, solar: 0, divertedSolar: 0, battery: 0, grid: 0, cost: 0,
+  }));
+
+  jobs.sort((a, b) => sourceOrder[a.source] - sourceOrder[b.source] || a.id - b.id);
   let deficit = 0;
+  let priorityDeficit = 0;
+  let missedChargeTarget = null;
   let grid = 0;
   let solar = 0;
   let gridCost = 0;
@@ -144,6 +151,8 @@ function evaluateSchedule(intervals, placements, battery) {
       let extraGrid = houseGrid;
       let exportUsed = lostExport;
       let surplus = row.headroom * hours;
+      let flexibleCharge = battery ? row.flexibleSolarCharge * hours : 0;
+      let divertedCharge = 0;
       let discharge = 0;
       if (battery && row.canSelfConsume && row.charge <= forecastRoundingKw && row.dischargeLimit !== null) {
         const reserve = Math.max(row.floor, row.restrictedBelow);
@@ -157,32 +166,49 @@ function evaluateSchedule(intervals, placements, battery) {
         const demand = job.power * hours;
         const direct = Math.min(surplus, demand);
         surplus -= direct;
-        const stored = job.sourceIndex === 0 ? 0 : Math.min(discharge, demand - direct);
+        const diverted = job.source === "priority" ? Math.min(flexibleCharge, demand - direct) : 0;
+        flexibleCharge -= diverted;
+        divertedCharge += diverted;
+        const canUseBattery = job.source === "battery" || job.source === "grid";
+        const stored = canUseBattery ? Math.min(discharge, demand - direct) : 0;
         discharge -= stored;
-        const imported = Math.max(0, demand - direct - stored);
-        if (imported > energyTolerance && job.sourceIndex !== 2) return null;
+        const imported = Math.max(0, demand - direct - diverted - stored);
+        if (imported > energyTolerance && job.source !== "grid") return null;
         if (stored > energyTolerance) deficit += stored / battery.dischargeEfficiency;
         job.solar += direct;
+        job.divertedSolar += diverted;
         job.battery += stored;
         job.grid += imported;
         job.cost = addCost(addCost(job.cost, direct, row.sellPrice), imported, row.buyPrice);
-        solar += direct;
+        solar += direct + diverted;
         extraGrid += imported;
         exportUsed += direct;
       }
 
-      // Preserve forecast charging and use remaining forecast exports to
-      // replenish the extra discharge when the inverter has capacity.
+      if (divertedCharge > energyTolerance) {
+        const deferredEnergy = divertedCharge * battery.chargeEfficiency;
+        deficit += deferredEnergy;
+        priorityDeficit += deferredEnergy;
+      }
+
       if (battery && deficit > energyTolerance && row.canSelfConsume &&
           row.discharge <= forecastRoundingKw && row.chargeLimit !== null) {
-        const room = Math.max(0, row.chargeLimit - row.charge) * hours;
+        const room = Math.max(0, (row.chargeLimit - row.charge) * hours + divertedCharge);
         const refill = Math.min(surplus, room, deficit / battery.chargeEfficiency);
         deficit = Math.max(0, deficit - refill * battery.chargeEfficiency);
         exportUsed += refill;
       }
+
+      priorityDeficit = Math.min(priorityDeficit, deficit);
       if (battery && to === row.end && row.charge > forecastRoundingKw &&
-          row.chargeTarget !== null && row.endSoc >= row.chargeTarget - 0.05 &&
-          baseEnd - deficit / battery.capacity * 100 < row.chargeTarget - 0.05) return null;
+          row.chargeTarget !== null && row.endSoc >= row.chargeTarget - 0.05) {
+        const allowedShortfall = Math.max(0, (baseEnd - row.chargeTarget + 0.05) * battery.capacity / 100);
+        if (deficit - priorityDeficit > allowedShortfall) return null;
+        if (deficit > allowedShortfall && !missedChargeTarget) {
+          missedChargeTarget = { at: to, target: row.chargeTarget,
+            soc: Math.max(0, baseEnd - deficit / battery.capacity * 100) };
+        }
+      }
       if (row.importLimit !== null &&
           extraGrid > Math.max(0, row.importLimit - row.gridImport) * hours + energyTolerance) return null;
 
@@ -196,7 +222,7 @@ function evaluateSchedule(intervals, placements, battery) {
     }
   }
   return {
-    jobs, grid, solar, deficit, gridCost, exportImpact, afterRunGrid, afterRunCost,
+    jobs, grid, solar, deficit, gridCost, exportImpact, afterRunGrid, afterRunCost, missedChargeTarget,
     totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
   };
 }
@@ -243,10 +269,9 @@ function recommend(intervals, workloads, battery) {
       .filter(candidate => candidate.result);
     return { ...job, latest, candidates };
   });
-  // Try the constrained jobs first. Keep alternative schedules so a cheap
-  // individual window cannot automatically displace another workload.
+
   jobs.sort((a, b) => (a.candidates.length || Infinity) - (b.candidates.length || Infinity) ||
-    (a.deadline ?? horizon) - (b.deadline ?? horizon) || a.sourceIndex - b.sourceIndex ||
+    (a.deadline ?? horizon) - (b.deadline ?? horizon) || sourceOrder[a.source] - sourceOrder[b.source] ||
     b.duration - a.duration || a.id - b.id);
 
   const empty = { ...evaluateSchedule(intervals, [], battery), placements: [], finish: 0, starts: 0 };
@@ -269,7 +294,7 @@ function recommend(intervals, workloads, battery) {
     }
     alternatives.sort(compareSchedules);
     schedules = alternatives.slice(0, beamWidth);
-    // Retain the empty schedule when it has fallen out of the shortlist.
+
     if (!schedules.includes(empty)) schedules.push(empty);
   }
   return schedules[0];
@@ -280,20 +305,24 @@ function wallTime(timestamp, formatter) {
   return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute);
 }
 
-function parseDeadline(value, timeZone) {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
-  const target = Date.parse(value + "Z");
-  if (!Number.isFinite(target)) return null;
-  // Date inputs have no timezone. Resolve them in Home Assistant's zone,
-  // including the offset on either side of a daylight-saving transition.
+function parseDeadline(value, timeZone, now) {
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) return null;
+  const [hours, minutes] = value.split(":").map(Number);
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
     minute: "2-digit", hourCycle: "h23",
   });
-  const candidates = [-36, 0, 36].map(delta => target + delta * hour)
-    .map(probe => target - (wallTime(probe, formatter) - probe))
-    .filter(candidate => wallTime(candidate, formatter) === target);
-  return candidates.length ? Math.max(...candidates) : null;
+  const earliest = Math.floor(now / minute) * minute;
+  const localMidnight = Math.floor(wallTime(earliest, formatter) / (24 * hour)) * 24 * hour;
+
+  for (const day of [localMidnight, localMidnight + 24 * hour]) {
+    const target = day + hours * hour + minutes * minute;
+    const candidates = [-36, 0, 36].map(delta => target + delta * hour)
+      .map(probe => target - (wallTime(probe, formatter) - probe))
+      .filter(candidate => candidate >= earliest && wallTime(candidate, formatter) === target);
+    if (candidates.length) return Math.min(...candidates);
+  }
+  return null;
 }
 
 class EmDeferredWorkloadsPlannerCard extends HTMLElement {
@@ -322,14 +351,21 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         header ha-icon { color: var(--planner-solar); --mdc-icon-size: 22px; }
         header p, .muted, small { color: var(--planner-muted); font-size: 12px; }
         header p { margin-top: 2px; }
-        #editors { display: grid; gap: 8px; margin-top: 14px; }
+        #editors { display: grid; gap: 12px; margin-top: 14px; }
         .editor {
           display: grid;
           grid-template-columns: minmax(0,1fr) minmax(60px,.5fr) minmax(60px,.6fr)
-            minmax(135px,1fr) minmax(110px,.9fr) 32px;
+            minmax(95px,.75fr) minmax(110px,.9fr) 32px;
           align-items: end;
-          gap: 6px;
+          gap: 8px;
+          padding: 10px;
+          border: 1px solid var(--planner-line);
+          border-radius: 9px;
+          background: color-mix(in srgb, var(--planner-muted) 7%, transparent);
         }
+        .editor:focus-within { border-color: var(--planner-solar); }
+        .workload-name { font-weight: 600; }
+        .workload-name input { font-weight: 500; }
         label { display: grid; min-width: 0; gap: 3px; font-size: 11px; color: var(--planner-muted); }
         input, select, button {
           min-height: 34px;
@@ -406,7 +442,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
             <label class="workload-name">Workload<input data-field="name" type="text" placeholder="Workload name"></label>
             <label class="workload-power">Power (kW)<input data-field="power" type="number" min="0.1" step="0.1" inputmode="decimal"></label>
             <label class="workload-duration">Duration (min)<input data-field="minutes" type="number" min="1" step="1" inputmode="numeric"></label>
-            <label class="workload-deadline">Finish by (optional)<input data-field="deadline" type="datetime-local" step="60"></label>
+            <label class="workload-deadline">Finish by (optional)<input data-field="deadline" type="time" step="60"></label>
             <label class="power-source">Power source<select data-field="source"></select></label>
             <button class="remove" type="button" aria-label="Remove workload" title="Remove workload">×</button>
           </div>
@@ -498,13 +534,13 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._render();
   }
 
-  _readWorkloads(timeZone, earliest) {
+  _readWorkloads(timeZone, now, earliest) {
     return Array.from(this._get("editors").children, (row, index) => {
       const value = field => row.querySelector(`[data-field="${field}"]`).value;
       const power = finite(value("power"));
       const minutes = finite(value("minutes"));
       const deadlineValue = value("deadline");
-      const deadline = deadlineValue ? parseDeadline(deadlineValue, timeZone) : null;
+      const deadline = deadlineValue ? parseDeadline(deadlineValue, timeZone, now) : null;
       let problem = "";
       if (!(power >= 0.1) || !Number.isSafeInteger(minutes) || minutes < 1) {
         problem = "Enter a power and a whole-minute duration.";
@@ -516,7 +552,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       return {
         id: Number(row.dataset.id), name: value("name").trim() || "Workload " + (index + 1),
         power, duration: minutes * minute, deadline,
-        sourceIndex: sources.findIndex(([key]) => key === value("source")),
+        source: value("source"),
         problem,
       };
     });
@@ -549,7 +585,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       return;
     }
     const timeZone = this._hass.config?.time_zone || undefined;
-    const workloads = this._readWorkloads(timeZone, intervals[0].from);
+    const workloads = this._readWorkloads(timeZone, now, intervals[0].from);
     if (!workloads.length) {
       showStatus("Add a workload to see suggested times.");
       return;
@@ -594,7 +630,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         const endDay = day.format(row.start) === day.format(row.end) ? "" : day.format(row.end) + ", ";
         time.textContent = startLabel(row.start) + ", " + clock.format(row.start) + "–" + endDay + clock.format(row.end);
         item.dataset.source = row.grid > energyTolerance ? "grid" : row.battery > energyTolerance ? "battery" : "solar";
-        const mix = [[row.solar, "surplus solar"], [row.battery, "battery"], [row.grid, "grid"]]
+        const mix = [[row.solar, "surplus solar"], [row.divertedSolar, "solar diverted from charging"],
+          [row.battery, "battery"], [row.grid, "grid"]]
           .filter(([energy]) => energy > energyTolerance)
           .map(([energy, source]) => kwh(energy) + " " + source);
         detail.textContent = mix.join(" · ");
@@ -617,6 +654,11 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     totals.textContent = "Estimated added cost " + cost(schedule.totalCost) +
       " · Extra grid cost " + cost(schedule.gridCost) + " · Feed-in impact " + cost(schedule.exportImpact);
     const notes = [];
+    if (schedule.missedChargeTarget) {
+      const { at, target, soc } = schedule.missedChargeTarget;
+      notes.push("Battery forecast at " + startLabel(at) + ", " + clock.format(at) + " is " +
+        number.format(soc) + "% vs a planned " + number.format(target) + "% charge target.");
+    }
     if (schedule.afterRunGrid >= 0.005) {
       notes.push(kwh(schedule.afterRunGrid) + " extra grid use after the last run (" + cost(schedule.afterRunCost) + ").");
     }
@@ -625,8 +667,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       notes.push("Battery at forecast end " + number.format(endSoc) + "% vs " + number.format(last.endSoc) + "% planned.");
       if (endSoc <= last.minSoc + 0.1) notes.push("Further grid use beyond the forecast is possible.");
     }
-    if (!battery && workloads.some(row => row.sourceIndex !== 0)) {
-      notes.push("Battery support is unavailable without capacity and state-of-charge forecast data.");
+    if (!battery && workloads.some(row => row.source !== "solar")) {
+      notes.push("Battery discharge and charging diversion require capacity and state-of-charge forecast data.");
     }
     const effects = this._get("effects");
     effects.hidden = !notes.length;
