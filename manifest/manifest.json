@@ -151,6 +151,12 @@
       "backup_current": true,
       "new_in_version": "1.2.0"
     },
+    "foxess_modbus.yaml.disabled": {
+      "action": "replace",
+      "description": "FoxESS modbus configuration",
+      "backup_current": true,
+      "new_in_version": "2.1.0"
+    },
     "fronius_modbus.yaml.disabled": {
       "action": "replace",
       "description": "Fronius modbus configuration",
