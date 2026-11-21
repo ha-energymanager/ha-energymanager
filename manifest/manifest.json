@@ -666,7 +666,7 @@
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
-    "custom_components/em_deferred_workloads/planer.py": {
+    "custom_components/em_deferred_workloads/planner.py": {
       "action": "replace",
       "description": "Deferred Worksloads Planner",
       "new_in_version": "2.1.0"
