@@ -200,7 +200,7 @@ function replayWindow(intervals, window, power, battery) {
       lostExport += fromExport + divertedBattery;
 
       let extraBattery = 0;
-      if (interval.canSelfConsume && interval.charge <= 0.005 && applianceRemainder > energyTolerance) {
+      if (interval.canSelfConsume && remainingCharge <= 0.005 * hours && applianceRemainder > energyTolerance) {
         if (interval.dischargeLimit === null) return null;
         const reserve = Math.max(interval.floor, interval.restrictedBelow);
         const storedAvailable = Math.max(0, capacity * (baseEnd - reserve) / 100 - deficit);
