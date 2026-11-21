@@ -277,6 +277,12 @@
       "backup_current": true,
       "new_in_version": "2.1.0"
     },
+    "www/cards/em-deferred-workloads-planner-card.js": {
+      "action": "replace",
+      "description": "Deferred Workloads Planner",
+      "backup_current": true,
+      "new_in_version": "2.1.0"
+    },
     "www/cards/em-daily-plan-recap-card.js": {
       "action": "replace",
       "description": "Daily Plan Recap Card",
@@ -723,6 +729,11 @@
     "action": "module",
     "new_in_version": "2.1.0"
     },
+    {
+    "url": "/local/cards/em-deferred-workloads-planner-card.js",
+    "action": "module",
+    "new_in_version": "2.1.0"
+    }, 
     {
     "url": "/local/cards/em-daily-plan-recap-card.js",
     "action": "module",
