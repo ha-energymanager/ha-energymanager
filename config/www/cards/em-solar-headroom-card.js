@@ -45,6 +45,11 @@ function extractIntervals(timeline, earliest) {
     const controls = row.setpoints;
     const constraints = row.constraints;
     const forcedExport = row.mode === "FORCED_EXPORT" || nonnegative(controls?.force_export_kw) > 0;
+    const canSelfConsume = row.mode === "SELF_CONSUMPTION" && !forcedExport &&
+      nonnegative(controls?.force_charge_kw) === 0;
+
+    const flexibleSolarCharge = canSelfConsume && gridImport <= 0.005 && discharge <= 0.005 ?
+      Math.min(charge, Math.max(0, solar - totalLoad)) : 0;
     const minSoc = nonnegative(constraints?.min_soc_pct);
     const reserve = nonnegative(controls?.soc_reserve_pct);
     const startSoc = nonnegative(inputs?.soc_pct_start);
@@ -53,7 +58,7 @@ function extractIntervals(timeline, earliest) {
     const tapered = forcedExport && discharge > 0 &&
       gridExport + 0.005 < nonnegative(controls?.force_export_kw);
     intervals.push({
-      start, end, headroom, charge, discharge, gridExport, startSoc, endSoc,
+      start, end, headroom, flexibleSolarCharge, charge, discharge, gridExport, startSoc, endSoc,
       buyPrice: finite(inputs?.buy_price),
       sellPrice: finite(inputs?.sell_price),
       floor: minSoc === null || reserve === null ? null :
@@ -63,12 +68,17 @@ function extractIntervals(timeline, earliest) {
         nonnegative(constraints.battery_discharge_restriction_under_pct) ?? 0 : 0,
       chargeLimit: nonnegative(controls?.charge_limit_kw),
       dischargeLimit: nonnegative(controls?.discharge_limit_kw),
-      canSelfConsume: row.mode === "SELF_CONSUMPTION" && !forcedExport &&
-        nonnegative(controls?.force_charge_kw) === 0,
+      canSelfConsume,
     });
   }
 
   return intervals.sort((a, b) => a.start - b.start);
+}
+
+function applianceSolar(interval, power, hours) {
+  const fromExport = Math.min(power, interval.headroom);
+  const fromCharge = Math.min(power - fromExport, interval.flexibleSolarCharge);
+  return { fromExport: fromExport * hours, fromCharge: fromCharge * hours };
 }
 
 function scoreWindow(intervals, start, duration, power) {
@@ -76,6 +86,7 @@ function scoreWindow(intervals, start, duration, power) {
   const required = power * duration / hour;
   let cursor = start;
   let covered = 0;
+  let shiftedCharge = 0;
   let exportImpact = 0;
   let allPricesKnown = true;
 
@@ -83,11 +94,12 @@ function scoreWindow(intervals, start, duration, power) {
     if (interval.end <= cursor) continue;
     if (interval.start > cursor) return null;
     const segmentEnd = Math.min(interval.end, end);
-    const solarEnergy = Math.min(power, interval.headroom) * (segmentEnd - cursor) / hour;
-    covered += solarEnergy;
-    if (solarEnergy > energyTolerance) {
+    const { fromExport, fromCharge } = applianceSolar(interval, power, (segmentEnd - cursor) / hour);
+    covered += fromExport + fromCharge;
+    shiftedCharge += fromCharge;
+    if (fromExport > energyTolerance) {
       if (interval.sellPrice === null) allPricesKnown = false;
-      else exportImpact += solarEnergy * interval.sellPrice;
+      else exportImpact += fromExport * interval.sellPrice;
     }
     cursor = segmentEnd;
     if (cursor === end) {
@@ -117,10 +129,13 @@ function bestWindow(intervals, earliest, minutes, power) {
   for (const start of [...starts].filter((value) => value >= earliest).sort((a, b) => a - b)) {
     const candidate = scoreWindow(intervals, start, duration, power);
     if (!candidate) continue;
+    const sameCoverage = best && Math.abs(candidate.covered - best.covered) <= energyTolerance;
+    const lessShiftedCharge = best && candidate.shiftedCharge < best.shiftedCharge - energyTolerance;
+    const sameShiftedCharge = best && Math.abs(candidate.shiftedCharge - best.shiftedCharge) <= energyTolerance;
+    const lowerExportImpact = best && candidate.exportImpact !== null &&
+      (best.exportImpact === null || candidate.exportImpact < best.exportImpact - energyTolerance);
     if (!best || candidate.covered > best.covered + energyTolerance ||
-        (Math.abs(candidate.covered - best.covered) <= energyTolerance &&
-          candidate.exportImpact !== null &&
-          (best.exportImpact === null || candidate.exportImpact < best.exportImpact - energyTolerance))) {
+        (sameCoverage && (lessShiftedCharge || (sameShiftedCharge && lowerExportImpact)))) {
       best = candidate;
     }
   }
@@ -170,13 +185,17 @@ function replayWindow(intervals, window, power, battery) {
       let extraGrid = lostDischarge - lostExport;
 
       const solarExport = interval.headroom * hours;
-      const solar = running ? Math.min(power * hours, solarExport) : 0;
-      let applianceRemainder = running ? power * hours - solar : 0;
+      const { fromExport, fromCharge } = applianceSolar(interval, running ? power : 0, hours);
+      // Delayed charging reduces stored energy. Only the solar actually
+      // diverted from export immediately affects the feed-in credit.
+      deficit += fromCharge * chargeEfficiency;
+      const remainingCharge = Math.max(0, interval.charge * hours - fromCharge);
+      let applianceRemainder = running ? Math.max(0, power * hours - fromExport - fromCharge) : 0;
       const plannedBatteryExport = Math.min(interval.discharge * hours - lostDischarge,
         Math.max(0, exported - lostExport - solarExport));
       const divertedBattery = Math.min(applianceRemainder, plannedBatteryExport);
       applianceRemainder -= divertedBattery;
-      lostExport += solar + divertedBattery;
+      lostExport += fromExport + divertedBattery;
 
       let extraBattery = 0;
       if (interval.canSelfConsume && interval.charge <= 0.005 && applianceRemainder > energyTolerance) {
@@ -188,10 +207,10 @@ function replayWindow(intervals, window, power, battery) {
         deficit += extraBattery / dischargeEfficiency;
       }
       const applianceGrid = Math.max(0, applianceRemainder - extraBattery);
-      const spareSolar = Math.max(0, solarExport - solar);
+      const spareSolar = Math.max(0, solarExport - fromExport);
       if (interval.canSelfConsume && interval.discharge <= 0.005 &&
           deficit > energyTolerance && spareSolar > energyTolerance && interval.chargeLimit !== null) {
-        const chargeRoom = Math.max(0, interval.chargeLimit - interval.charge) * hours;
+        const chargeRoom = Math.max(0, interval.chargeLimit * hours - remainingCharge)
         const refill = Math.min(spareSolar, chargeRoom, deficit / chargeEfficiency);
         deficit = Math.max(0, deficit - refill * chargeEfficiency);
         lostExport += refill;
@@ -447,7 +466,9 @@ class EmSolarHeadroomCard extends HTMLElement {
     const configuredCapacity = this._config.capacity;
     const entityCapacity = nonnegative(this._hass.states?.[this._config.capacityEntity]?.state);
     const capacity = configuredCapacity || entityCapacity;
-    const replay = best.fullSolar ? null : replayWindow(intervals, best, power, {
+    const usesFlexibleCharge = best.shiftedCharge > energyTolerance;
+    const usesSurplusOnly = best.fullSolar && !usesFlexibleCharge;
+    const replay = usesSurplusOnly ? null : replayWindow(intervals, best, power, {
       capacity,
       chargeEfficiency: this._config.chargeEfficiency,
       dischargeEfficiency: this._config.dischargeEfficiency,
@@ -468,9 +489,9 @@ class EmSolarHeadroomCard extends HTMLElement {
     const displayedFraction = best.fullSolar ? 1 : Math.min(0.99, fraction);
     const percentage = new Intl.NumberFormat(locale, { style: "percent" });
     const energy = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
-    const amount = replay ? replay.exportImpact : best.exportImpact;
-    const gridCost = best.fullSolar ? 0 : replay?.gridCost ?? null;
-    const totalCost = best.fullSolar ? amount : replay?.totalCost ?? null;
+    const amount = replay ? replay.exportImpact : usesFlexibleCharge ? null : best.exportImpact;
+    const gridCost = usesSurplusOnly ? 0 : replay?.gridCost ?? null;
+    const totalCost = usesSurplusOnly ? amount : replay?.totalCost ?? null;
     const cents = amount !== null ? Math.round(Math.abs(amount) * 100) : null;
     const currency = new Intl.NumberFormat(locale, { style: "currency", currency: "AUD", currencyDisplay: "narrowSymbol" });
 
@@ -493,7 +514,7 @@ class EmSolarHeadroomCard extends HTMLElement {
 
     set("money", cents === null ? "—" : currency.format(Math.abs(amount)));
     const tradeOff = amount > 0 ? "Feed-in credit forgone" : "Export charges avoided";
-    set("money-label", cents === null ? "Feed-in price unavailable" : cents ? tradeOff : "Feed-in impact");
+    set("money-label", cents === null ? "Feed-in impact unavailable" : cents ? tradeOff : "Feed-in impact");
     const formatEnergy = value => value === null ? "—" : energy.format(value) + " kWh";
     const formatCost = value => value === null ? "—" : currency.format(value);
     set("battery", formatEnergy(best.fullSolar ? 0 : replay?.fromBattery ?? null));
@@ -502,24 +523,26 @@ class EmSolarHeadroomCard extends HTMLElement {
     let gridCostLabel = "Extra grid cost";
     if (replay?.gridLater > energyTolerance) {
       gridCostLabel = "Grid cost · includes " + formatEnergy(replay.gridLater) + " later";
-    } else if (best.fullSolar || (replay && replay.gridAdded <= energyTolerance)) {
+    } else if (usesSurplusOnly || (replay && replay.gridAdded <= energyTolerance)) {
       gridCostLabel = "No extra grid use forecast";
     }
     set("grid-cost-label", gridCostLabel);
     set("total-cost", formatCost(totalCost));
 
-    if (best.fullSolar) {
+    if (usesSurplusOnly) {
       set("note", "Uses forecast surplus after house demand, EV and battery charging.");
     } else if (!replay) {
       set("note", capacity ? "Battery and grid impact are unavailable with the current plan data." :
         "Set the battery capacity to estimate battery and grid impact.");
-   } else {
+    } else {
+      const charging = usesFlexibleCharge ?
+        formatEnergy(best.shiftedCharge) + " diverted from planned solar charging. " : "";
       const soc = value => percentage.format(value / 100);
       const lowest = "Lowest battery SoC " + soc(replay.replayMin) + " · plan " + soc(replay.plannedMin) + ".";
       const horizon = " Through " + day.format(replay.through) + ", " + clock.format(replay.through) + ".";
       const ending = replay.deficit > energyTolerance ?
         " Battery ends " + formatEnergy(replay.deficit) + " lower." : "";
-      set("note", lowest + horizon + ending);
+      set("note", charging + lowest + horizon + ending);
     }
   }
 }
