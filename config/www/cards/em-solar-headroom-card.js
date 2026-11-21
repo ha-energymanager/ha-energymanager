@@ -383,7 +383,6 @@ class EmSolarHeadroomCard extends HTMLElement {
         previous.config?.time_zone !== hass?.config?.time_zone ||
         previous.states?.[entity] !== hass?.states?.[entity] ||
         previous.states?.[this._config.capacityEntity] !== hass?.states?.[this._config.capacityEntity]) {
-        previous.states?.[this._config.capacityEntity] !== hass?.states?.[this._config.capacityEntity]) {
       this._render();
     }
   }
