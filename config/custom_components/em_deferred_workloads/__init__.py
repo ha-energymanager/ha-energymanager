@@ -309,11 +309,15 @@ class Scheduler:
         if stop and (stop == item["start_automation"] or not self.automation_selectable(stop)):
             raise vol.Invalid(f"Choose a different available stop automation for {name}.")
 
+    def validate_deadline(self, item, now):
+        deadline = item.get("deadline")
+        if deadline is None or not now < deadline <= now + 172800 or deadline - item["duration"] <= now:
+            raise vol.Invalid(f"{item['name']} needs a future finish time with enough time to run.")
+
     def build_pending_run(self, item, jobs, now, created):
+        self.validate_deadline(item, now)
         name = item["name"]
-        start, deadline, duration = item.get("start"), item.get("deadline"), item["duration"]
-        if deadline is None or not now < deadline <= now + 172800 or deadline - duration <= now:
-            raise vol.Invalid(f"{name} needs a future finish time with enough time to run.")
+        start, deadline, duration = item.get("start"), item["deadline"], item["duration"]
         if start is None and item["timing"] != "flexible":
             raise vol.Invalid(f"{name} needs a suggested start time.")
         if start is not None and (start <= now or start + duration > deadline):
@@ -342,18 +346,34 @@ class Scheduler:
                 raise vol.Invalid("Edit changes one run at a time.")
             self.validate_workload(item)
             now = time()
+            self.validate_deadline(item, now)
+            zone = self.schedule_zone()
+            run_date = datetime.fromtimestamp(original["deadline"], zone).date()
+            if datetime.fromtimestamp(item["deadline"], zone).date() != run_date:
+                raise vol.Invalid("The edited finish time must be on the original finish date.")
+            if original.get("repeat_id") and datetime.fromtimestamp(now, zone).date().isoformat() != original["run_date"]:
+                raise vol.Invalid("The edited occurrence must fit on its original day.")
+
             jobs = deepcopy(self.jobs)
             del jobs[job_id]
+            item = dict(item, start=None)
+            if item["timing"] == "fixed":
+                intervals, capacity = self.forecast(ceil((now + 1) / 60) * 60, now)
+                if not intervals:
+                    raise vol.Invalid("Wait for an up-to-date forecast before saving this Fixed run.")
+                reserved = [self.reservation(job) for job in jobs.values()
+                            if job["status"] in ACTIVE and job["start"] is not None]
+                starts = await self.hass.async_add_executor_job(
+                    recommend, intervals, [item], reserved, capacity,
+                    self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"],
+                )
+                if job_id not in starts:
+                    raise vol.Invalid("No available window fits before the finish time with these settings.")
+                item["start"] = ceil(starts[job_id])
+                now = time()
             replacement = self.build_pending_run(item, jobs, now, original["created"])
             if original.get("repeat_id"):
-                zone = self.schedule_zone()
-                run_date = original["run_date"]
-                stamps = [now, replacement["deadline"]]
-                if replacement["start"] is not None:
-                    stamps.append(replacement["start"])
-                if any(datetime.fromtimestamp(stamp, zone).date().isoformat() != run_date for stamp in stamps):
-                    raise vol.Invalid("The edited occurrence must fit on its original day.")
-                replacement.update(repeat_id=original["repeat_id"], run_date=run_date)
+                replacement.update(repeat_id=original["repeat_id"], run_date=original["run_date"])
             jobs[job_id] = replacement
             await self.commit(jobs)
             self.wake.set()
