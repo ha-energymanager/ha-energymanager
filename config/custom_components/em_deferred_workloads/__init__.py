@@ -83,7 +83,7 @@ async def async_setup(hass, config):
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
-    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled):
+    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_edit):
         websocket_api.async_register_command(hass, command)
     if hass.is_running:
         scheduler.start(None)
@@ -154,6 +154,17 @@ async def ws_clear_cancelled(hass, connection, msg):
     connection.send_result(msg["id"], {"count": count})
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/edit",
+    vol.Required("job"): APPROVAL,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_edit(hass, connection, msg):
+    await hass.data[DOMAIN].edit(msg["job"])
+    connection.send_result(msg["id"])
+
+
 class Scheduler:
     def __init__(self, hass, config):
         self.hass = hass
@@ -213,6 +224,7 @@ class Scheduler:
         return {
             "jobs": [dict(job, unskip_until=self.unskip_until(job, self.repeats, now)) for job in jobs],
             "automation_exclusions": AUTOMATION_EXCLUSIONS,
+            "supports_edit": True,
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -274,43 +286,77 @@ class Scheduler:
                     raise vol.Invalid("This approval ID is already in use.")
                 if active_count >= MAX_ACTIVE:
                     raise vol.Invalid(f"At most {MAX_ACTIVE} workloads can be active.")
-                if item["duration"] % 60:
-                    raise vol.Invalid(f"{name} needs a whole-minute duration.")
-                if not self.automation_selectable(item["start_automation"]):
-                    raise vol.Invalid(f"Choose an available start automation for {name}.")
-                stop = item["stop_automation"]
-                if stop and (stop == item["start_automation"] or not self.automation_selectable(stop)):
-                    raise vol.Invalid(f"Choose a different available stop automation for {name}.")
+                self.validate_workload(item)
                 if "repeat" in item:
                     self.add_repeat(repeats, item, now)
                     active_count += 1
                     continue
 
-                start, deadline, duration = item.get("start"), item.get("deadline"), item["duration"]
-                if deadline is None or not now < deadline <= now + 172800 or deadline - duration <= now:
-                    raise vol.Invalid(f"{name} needs a future finish time with enough time to run.")
-                if start is None and item["timing"] != "flexible":
-                    raise vol.Invalid(f"{name} needs a suggested start time.")
-                if start is not None and (start <= now or start + duration > deadline):
-                    raise vol.Invalid(f"The suggested start for {name} has expired. Review the refreshed times.")
-                if start is None and item["policy"] == "must":
-                    start = deadline - duration
-                if start is not None:
-                    window = dict(item, start=start, end=start + duration)
-                    existing = [self.reservation(job) for job in jobs.values()
-                                if job["status"] in ACTIVE and job["start"] is not None]
-                    if overlaps(window, existing):
-                        raise vol.Invalid(f"{name} overlaps another approved run using the same automation.")
-                jobs[item["id"]] = dict(
-                    item, approval=dict(item), created=now, start=start, stop_at=None,
-                    actual_start=None, status="scheduled" if item.get("start") is not None else "delayed",
-                    note="", start_failed=False,
-                )
+                jobs[item["id"]] = self.build_pending_run(item, jobs, now, now)
                 active_count += 1
             self.create_daily_runs(jobs, repeats, now)
             await self.commit(jobs, repeats)
             self.wake.set()
             return ids
+
+    def validate_workload(self, item):
+        name = item["name"]
+        if item["duration"] % 60:
+            raise vol.Invalid(f"{name} needs a whole-minute duration.")
+        if not self.automation_selectable(item["start_automation"]):
+            raise vol.Invalid(f"Choose an available start automation for {name}.")
+        stop = item["stop_automation"]
+        if stop and (stop == item["start_automation"] or not self.automation_selectable(stop)):
+            raise vol.Invalid(f"Choose a different available stop automation for {name}.")
+
+    def build_pending_run(self, item, jobs, now, created):
+        name = item["name"]
+        start, deadline, duration = item.get("start"), item.get("deadline"), item["duration"]
+        if deadline is None or not now < deadline <= now + 172800 or deadline - duration <= now:
+            raise vol.Invalid(f"{name} needs a future finish time with enough time to run.")
+        if start is None and item["timing"] != "flexible":
+            raise vol.Invalid(f"{name} needs a suggested start time.")
+        if start is not None and (start <= now or start + duration > deadline):
+            raise vol.Invalid(f"The suggested start for {name} has expired. Review the refreshed times.")
+        if start is None and item["policy"] == "must":
+            start = deadline - duration
+        if start is not None:
+            window = dict(item, start=start, end=start + duration)
+            existing = [self.reservation(job) for job in jobs.values()
+                        if job["status"] in ACTIVE and job["start"] is not None]
+            if overlaps(window, existing):
+                raise vol.Invalid(f"{name} overlaps another approved run using the same automation.")
+        return dict(
+            item, approval=dict(item), created=created, start=start, stop_at=None,
+            actual_start=None, status="scheduled" if item.get("start") is not None else "delayed",
+            note="", start_failed=False,
+        )
+
+    async def edit(self, item):
+        async with self.lock:
+            job_id = item["id"]
+            original = self.jobs.get(job_id)
+            if original is None or original["status"] not in PENDING:
+                raise vol.Invalid("Only a scheduled or delayed run can be edited.")
+            if "repeat" in item:
+                raise vol.Invalid("Edit changes one run at a time.")
+            self.validate_workload(item)
+            now = time()
+            jobs = deepcopy(self.jobs)
+            del jobs[job_id]
+            replacement = self.build_pending_run(item, jobs, now, original["created"])
+            if original.get("repeat_id"):
+                zone = self.schedule_zone()
+                run_date = original["run_date"]
+                stamps = [now, replacement["deadline"]]
+                if replacement["start"] is not None:
+                    stamps.append(replacement["start"])
+                if any(datetime.fromtimestamp(stamp, zone).date().isoformat() != run_date for stamp in stamps):
+                    raise vol.Invalid("The edited occurrence must fit on its original day.")
+                replacement.update(repeat_id=original["repeat_id"], run_date=run_date)
+            jobs[job_id] = replacement
+            await self.commit(jobs)
+            self.wake.set()
 
     async def cancel(self, job_id):
         async with self.lock:
