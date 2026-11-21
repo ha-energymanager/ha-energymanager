@@ -151,6 +151,7 @@ function replayWindow(intervals, window, power, battery) {
   let fromBattery = 0;
   let gridDuring = 0;
   let gridLater = 0;
+  let gridLaterCost = 0;
   let gridAdded = 0;
   let gridCost = 0;
   let exportImpact = 0;
@@ -220,11 +221,15 @@ function replayWindow(intervals, window, power, battery) {
 
       fromBattery += divertedBattery + extraBattery;
       if (running) gridDuring += applianceGrid;
-      else gridLater += extraGrid;
       extraGrid += applianceGrid;
       gridAdded += extraGrid;
-      if (extraGrid > energyTolerance && gridCost !== null) {
-        gridCost = interval.buyPrice === null ? null : gridCost + extraGrid * interval.buyPrice;
+      if (extraGrid > energyTolerance) {
+        const cost = interval.buyPrice === null ? null : extraGrid * interval.buyPrice;
+        gridCost = gridCost === null || cost === null ? null : gridCost + cost;
+        if (!running) {
+          gridLater += extraGrid;
+          gridLaterCost = gridLaterCost === null || cost === null ? null : gridLaterCost + cost;
+        }
       }
       if (lostExport > energyTolerance && exportImpact !== null) {
         exportImpact = interval.sellPrice === null ? null : exportImpact + lostExport * interval.sellPrice;
@@ -237,7 +242,7 @@ function replayWindow(intervals, window, power, battery) {
   if (cursor < end || plannedEndSoc === null) return null;
   const replayEndSoc = Math.max(0, plannedEndSoc - deficit / capacity * 100);
   return {
-    fromBattery, gridDuring, gridLater, gridAdded, gridCost, exportImpact,
+    fromBattery, gridDuring, gridLater, gridLaterCost, gridAdded, gridCost, exportImpact,
     totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
     plannedMin, replayMin, plannedEndSoc, replayEndSoc, deficit, through: cursor,
   };
@@ -362,6 +367,10 @@ class EmSolarHeadroomCard extends HTMLElement {
             <div class="metric"><strong id="total-cost"></strong><span>Cost through forecast</span></div>
           </div>
           <progress id="bar" max="1" aria-label="Forecast solar coverage"></progress>
+          <div id="later-grid-impact" class="battery-impact" role="status" hidden>
+            <strong>Extra grid use after the run</strong>
+            <p id="later-grid-impact-detail"></p>
+          </div>
           <div id="battery-impact" class="battery-impact" role="status" hidden>
             <strong>Load lowers the forecast battery level</strong>
             <p id="battery-impact-detail"></p>
@@ -536,15 +545,20 @@ class EmSolarHeadroomCard extends HTMLElement {
     set("battery", formatEnergy(best.fullSolar ? 0 : replay?.fromBattery ?? null));
     set("grid", formatEnergy(best.fullSolar ? 0 : replay?.gridDuring ?? null));
     set("grid-cost", formatCost(gridCost));
-    let gridCostLabel = "Extra grid cost";
-    if (replay?.gridLater > energyTolerance) {
-      gridCostLabel = "Grid cost · includes " + formatEnergy(replay.gridLater) + " later";
-    } else if (usesSurplusOnly || (replay && replay.gridAdded <= energyTolerance)) {
-      gridCostLabel = "No extra grid use forecast";
-    }
-    set("grid-cost-label", gridCostLabel);
+    const noExtraGrid = usesSurplusOnly || (replay && replay.gridAdded <= energyTolerance);
+    set("grid-cost-label", noExtraGrid ? "No extra grid use forecast" : "Extra grid cost");
     set("total-cost", formatCost(totalCost));
 
+    const laterGridImpact = get("later-grid-impact");
+    const showLaterGridImpact = replay?.gridLater >= 0.005;
+    laterGridImpact.hidden = !showLaterGridImpact;
+    if (showLaterGridImpact) {
+      const cost = replay.gridLaterCost === null ? "Some forecast rates are unavailable." :
+        formatCost(replay.gridLaterCost) + " included in the grid cost above.";
+      set("later-grid-impact-detail", "The battery reserve limits discharge, adding " +
+        formatEnergy(replay.gridLater) + " of forecast grid import after the run. " + cost);
+    }
+    
     const batteryImpact = get("battery-impact");
     const showBatteryImpact = replay && replay.plannedEndSoc - replay.replayEndSoc >= 0.1;
     batteryImpact.hidden = !showBatteryImpact;
