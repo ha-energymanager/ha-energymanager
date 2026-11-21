@@ -575,7 +575,7 @@ class EmSolarHeadroomCard extends HTMLElement {
     
     const batteryImpact = get("battery-impact");
     batteryImpact.hidden = !batteryEndsLower;
-    if (batteryEndsLower) 
+    if (batteryEndsLower) {
       const planned = endSoc.format(replay.plannedEndSoc / 100);
       const withLoad = endSoc.format(replay.replayEndSoc / 100);
       set("battery-impact-detail", "At forecast end, " + withLoad + " with this load vs " +
