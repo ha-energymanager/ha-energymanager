@@ -2,12 +2,13 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time as clock_time, timedelta
 import logging
 from math import ceil
 import re
 from time import time
-from uuid import UUID
+from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 import voluptuous as vol
 
@@ -48,11 +49,31 @@ APPROVAL = {
     vol.Required("source"): vol.In(SOURCES),
     vol.Required("timing"): vol.In(("fixed", "flexible")),
     vol.Required("policy"): vol.In(("must", "defer")),
-    vol.Required("start"): vol.Any(int, None),
-    vol.Required("deadline"): int,
+    vol.Optional("start"): vol.Any(int, None),
+    vol.Optional("deadline"): int,
+    vol.Optional("repeat"): {
+        vol.Required("days"): vol.All([vol.In(range(7))], vol.Length(min=1, max=7)),
+        vol.Required("finish_by"): str,
+        vol.Optional("start_at"): str,
+    },
     vol.Required("start_automation"): str,
     vol.Required("stop_automation"): str,
 }
+
+
+def read_clock(value):
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+        return None
+    hours, minutes = map(int, value.split(":"))
+    return hours * 60 + minutes
+
+
+def local_timestamp(day, value, zone):
+    minutes = read_clock(value)
+    naive = datetime.combine(day, clock_time(minutes // 60, minutes % 60))
+    # The round trip detects a local time skipped by a daylight-saving change.
+    stamp = naive.replace(tzinfo=zone).timestamp()
+    return stamp if datetime.fromtimestamp(stamp, zone).replace(tzinfo=None) == naive else None
 
 
 async def async_setup(hass, config):
@@ -60,7 +81,7 @@ async def async_setup(hass, config):
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
-    for command in (ws_subscribe, ws_approve, ws_cancel, ws_retry_stop):
+    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop):
         websocket_api.async_register_command(hass, command)
     if hass.is_running:
         scheduler.start(None)
@@ -99,6 +120,14 @@ async def ws_cancel(hass, connection, msg):
     connection.send_result(msg["id"])
 
 
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/cancel_repeat", vol.Required("job_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_cancel_repeat(hass, connection, msg):
+    await hass.data[DOMAIN].cancel_repeat(msg["job_id"])
+    connection.send_result(msg["id"])
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/retry_stop", vol.Required("job_id"): str})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -113,6 +142,7 @@ class Scheduler:
         self.config = config
         self.store = Store(hass, 1, DOMAIN, atomic_writes=True)
         self.jobs = {}
+        self.repeats = {}
         self.listeners = set()
         self.lock = asyncio.Lock()
         self.wake = asyncio.Event()
@@ -123,6 +153,7 @@ class Scheduler:
         saved = await self.store.async_load()
         if saved:
             self.jobs = {job["id"]: job for job in saved["jobs"]}
+            self.repeats = {entry["id"]: entry for entry in saved.get("repeats", [])}
         jobs = deepcopy(self.jobs)
         for job in jobs.values():
             if job["status"] == "starting":
@@ -161,22 +192,25 @@ class Scheduler:
     def snapshot(self):
         return {
             "jobs": sorted(self.jobs.values(), key=lambda job: job["created"], reverse=True),
+            "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
 
-    async def commit(self, jobs):
-        if jobs == self.jobs:
+    async def commit(self, jobs, repeats=None):
+        repeats = self.repeats if repeats is None else repeats
+        if jobs == self.jobs and repeats == self.repeats:
             return
         finished = sorted((job for job in jobs.values() if job["status"] not in ACTIVE),
                           key=lambda job: job["created"], reverse=True)
         for job in finished[HISTORY:]:
             del jobs[job["id"]]
-        saved = {"jobs": list(jobs.values())}
+        saved = {"jobs": list(jobs.values()), "repeats": list(repeats.values())}
         await self.store.async_save(saved)
         # Home Assistant's Store logs some write errors instead of raising them.
         if await self.store.async_load() != saved:
             raise HomeAssistantError("Could not verify the saved workload schedule.")
         self.jobs = jobs
+        self.repeats = repeats
         data = self.snapshot()
         for listener in tuple(self.listeners):
             try:
@@ -192,7 +226,9 @@ class Scheduler:
         async with self.lock:
             now = time()
             jobs = deepcopy(self.jobs)
-            active_count = sum(job["status"] in ACTIVE for job in jobs.values())
+            repeats = deepcopy(self.repeats)
+            active_count = len(repeats) + sum(job["status"] in ACTIVE and job.get("repeat_id") not in repeats
+                                              for job in jobs.values())
             ids = []
             for item in requested:
                 name = item["name"]
@@ -202,25 +238,32 @@ class Scheduler:
                 except ValueError:
                     raise vol.Invalid("Invalid or duplicate workload ID.") from None
                 ids.append(item["id"])
-                if item["id"] in jobs:
-                    if jobs[item["id"]]["approval"] == item:
+                existing = jobs.get(item["id"]) or repeats.get(item["id"])
+                if existing is not None:
+                    if existing["approval"] == item:
                         continue
                     raise vol.Invalid("This approval ID is already in use.")
                 if active_count >= MAX_ACTIVE:
                     raise vol.Invalid(f"At most {MAX_ACTIVE} workloads can be active.")
-                start, deadline, duration = item["start"], item["deadline"], item["duration"]
-                if (not now < deadline <= now + 172800 or duration % 60
-                        or deadline - duration <= now):
-                    raise vol.Invalid(f"{name} needs a future finish time with enough time to run.")
-                if start is None and item["timing"] != "flexible":
-                    raise vol.Invalid(f"{name} needs a suggested start time.")
-                if start is not None and (start <= now or start + duration > deadline):
-                    raise vol.Invalid(f"The suggested start for {name} has expired. Review the refreshed times.")
+                if item["duration"] % 60:
+                    raise vol.Invalid(f"{name} needs a whole-minute duration.")
                 if not self.automation_available(item["start_automation"]):
                     raise vol.Invalid(f"Choose an available start automation for {name}.")
                 stop = item["stop_automation"]
                 if stop and (stop == item["start_automation"] or not self.automation_available(stop)):
                     raise vol.Invalid(f"Choose a different available stop automation for {name}.")
+                if "repeat" in item:
+                    self.add_repeat(repeats, item, now)
+                    active_count += 1
+                    continue
+
+                start, deadline, duration = item.get("start"), item.get("deadline"), item["duration"]
+                if deadline is None or not now < deadline <= now + 172800 or deadline - duration <= now:
+                    raise vol.Invalid(f"{name} needs a future finish time with enough time to run.")
+                if start is None and item["timing"] != "flexible":
+                    raise vol.Invalid(f"{name} needs a suggested start time.")
+                if start is not None and (start <= now or start + duration > deadline):
+                    raise vol.Invalid(f"The suggested start for {name} has expired. Review the refreshed times.")
                 if start is None and item["policy"] == "must":
                     start = deadline - duration
                 if start is not None:
@@ -231,11 +274,12 @@ class Scheduler:
                         raise vol.Invalid(f"{name} overlaps another approved run using the same automation.")
                 jobs[item["id"]] = dict(
                     item, approval=dict(item), created=now, start=start, stop_at=None,
-                    actual_start=None, status="scheduled" if item["start"] is not None else "delayed",
+                    actual_start=None, status="scheduled" if item.get("start") is not None else "delayed",
                     note="", start_failed=False,
                 )
                 active_count += 1
-            await self.commit(jobs)
+            self.create_daily_runs(jobs, repeats, now)
+            await self.commit(jobs, repeats)
             self.wake.set()
             return ids
 
@@ -244,9 +288,89 @@ class Scheduler:
             jobs = deepcopy(self.jobs)
             if job_id not in jobs or jobs[job_id]["status"] not in PENDING:
                 raise vol.Invalid("Only a pending workload can be cancelled.")
-            jobs[job_id].update(status="cancelled", note="")
+            job = jobs[job_id]
+            if job.get("repeat_id"):
+                job.update(status="skipped", note="Today's run was skipped manually.")
+            else:
+                job.update(status="cancelled", note="")
             await self.commit(jobs)
             self.wake.set()
+
+    async def cancel_repeat(self, repeat_id):
+        async with self.lock:
+            if repeat_id not in self.repeats:
+                raise vol.Invalid("This repeated schedule is no longer active.")
+            repeats = dict(self.repeats)
+            del repeats[repeat_id]
+            jobs = deepcopy(self.jobs)
+            for job in jobs.values():
+                if job.get("repeat_id") == repeat_id and job["status"] in PENDING:
+                    job.update(status="cancelled", note="Repeated schedule cancelled.")
+            await self.commit(jobs, repeats)
+            self.wake.set()
+
+    def schedule_zone(self):
+        return ZoneInfo(self.hass.config.time_zone)
+
+    def add_repeat(self, repeats, item, now):
+        repeat = item["repeat"]
+        name = item["name"]
+        days = repeat["days"]
+        if not days or len(set(days)) != len(days) or any(type(day) is not int or not 0 <= day <= 6 for day in days):
+            raise vol.Invalid(f"Choose distinct weekdays for {name}.")
+        finish = read_clock(repeat["finish_by"])
+        fixed = item["timing"] == "fixed"
+        start = read_clock(repeat.get("start_at", "")) if fixed else 0
+        if finish is None or start is None or (finish - start) * 60 < item["duration"]:
+            raise vol.Invalid(f"{name} needs enough time to finish on each selected day.")
+        repeats[item["id"]] = dict(
+            id=item["id"], approval=deepcopy(item), created=now,
+            approved_on=datetime.fromtimestamp(now, self.schedule_zone()).date().isoformat(), last_date=None,
+        )
+
+    def create_daily_runs(self, jobs, repeats, now):
+        """Materialize only today's selected occurrence and record it in the same write."""
+        if not repeats:
+            return None
+        zone = self.schedule_zone()
+        day = datetime.fromtimestamp(now, zone).date()
+        day_key = day.isoformat()
+        midnight = datetime.combine(day, clock_time.min, zone).timestamp()
+        for entry in repeats.values():
+            item = entry["approval"]
+            rule = item["repeat"]
+            if (day.weekday() not in rule["days"] or day_key < entry["approved_on"]
+                    or (entry["last_date"] and entry["last_date"] >= day_key)):
+                continue
+
+            deadline = local_timestamp(day, rule["finish_by"], zone)
+            fixed = item["timing"] == "fixed"
+            start = local_timestamp(day, rule["start_at"], zone) if fixed else None
+            duration = item["duration"]
+            latest = None if deadline is None else (start if fixed else deadline - duration)
+            valid = (deadline is not None and (start is not None if fixed else True)
+                     and (start if fixed else midnight) + duration <= deadline)
+            entry["last_date"] = day_key
+            # Approving after today's latest start takes effect on the next selected day.
+            if valid and day_key == entry["approved_on"] and latest < entry["created"]:
+                continue
+
+            child_id = str(uuid5(UUID(entry["id"]), day_key))
+            note = ""
+            status = "scheduled" if fixed else "delayed"
+            if not valid:
+                status, note = "skipped", "Local clock change left no valid time for this run."
+            elif now - latest > START_GRACE:
+                status, note = "skipped", "Home Assistant missed today's latest start time."
+            jobs[child_id] = dict(
+                id=child_id, repeat_id=entry["id"], run_date=day_key,
+                name=item["name"], power=item["power"], duration=duration, source=item["source"],
+                timing=item["timing"], policy=item["policy"], start=start, deadline=deadline or midnight,
+                start_automation=item["start_automation"], stop_automation=item["stop_automation"],
+                approval={"start": start}, created=now, actual_start=None, stop_at=None,
+                status=status, note=note, start_failed=False,
+            )
+        return datetime.combine(day + timedelta(days=1), clock_time.min, zone).timestamp()
 
     async def retry_stop(self, job_id):
         async with self.lock:
@@ -314,6 +438,17 @@ class Scheduler:
             self.dispatch(job_id, "stop")
 
         jobs = deepcopy(self.jobs)
+        if self.repeats:
+            repeats = deepcopy(self.repeats)
+            remaining.append(self.create_daily_runs(jobs, repeats, now))
+            await self.commit(jobs, repeats)
+            jobs = deepcopy(self.jobs)
+        local_date = datetime.fromtimestamp(now, self.schedule_zone()).date().isoformat() if any(
+            job.get("run_date") and job["status"] in PENDING for job in jobs.values()
+        ) else None
+        for job in jobs.values():
+            if job["status"] in PENDING and job.get("run_date") and job["run_date"] < local_date:
+                job.update(status="skipped", note="The selected day has ended.")
         pending = [job for job in jobs.values() if job["status"] in PENDING]
         if pending:
             starts = []
@@ -321,6 +456,8 @@ class Scheduler:
             await self.commit(jobs)
             for job_id in starts:
                 self.dispatch(job_id, "start")
+        else:
+            await self.commit(jobs)
         return min(remaining, default=None)
 
     def dispatch(self, job_id, phase):
@@ -393,9 +530,12 @@ class Scheduler:
             if now >= latest:
                 job.update(status="skipped", note="No suitable window was available by the deadline.")
             elif start is not None:
-                moved = start != job["approval"]["start"]
+                original = job["approval"]["start"]
+                if job.get("repeat_id") and original is None:
+                    job["approval"]["start"] = original = start
+                moved = start != original
                 job.update(start=start, status="delayed" if moved and
-                           (job["approval"]["start"] is None or start > job["approval"]["start"]) else "scheduled",
+                           (original is None or start > original) else "scheduled",
                            note="Moved with the updated forecast." if moved else "")
                 remaining.append(start)
             else:
