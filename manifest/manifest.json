@@ -677,6 +677,11 @@
       "description": "Deferred Worksloads Planner",
       "new_in_version": "2.1.0"
     },
+    "custom_components/em_deferred_workloads/automation_filter.py": {
+      "action": "replace",
+      "description": "Deferred Worksloads Automation Filter",
+      "new_in_version": "2.1.0"
+    },    
     "custom_components/em_deferred_workloads/manifest.json": {
       "action": "replace",
       "description": "Manifest for Deferred Worksloads Planner Component",
