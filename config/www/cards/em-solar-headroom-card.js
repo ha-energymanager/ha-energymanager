@@ -156,6 +156,7 @@ function replayWindow(intervals, window, power, battery) {
   let exportImpact = 0;
   let plannedMin = 100;
   let replayMin = 100;
+  let plannedEndSoc = null;
 
   for (const interval of intervals) {
     if (interval.end <= cursor) continue;
@@ -172,6 +173,7 @@ function replayWindow(intervals, window, power, battery) {
       const hours = (segmentEnd - cursor) / hour;
       const baseStart = socAt(cursor);
       const baseEnd = socAt(segmentEnd);
+      plannedEndSoc = baseEnd;
       const floor = Math.min(baseEnd, interval.floor);
 
       plannedMin = Math.min(plannedMin, baseStart, baseEnd);
@@ -232,11 +234,12 @@ function replayWindow(intervals, window, power, battery) {
     }
   }
 
-  if (cursor < end) return null;
+  if (cursor < end || plannedEndSoc === null) return null;
+  const replayEndSoc = Math.max(0, plannedEndSoc - deficit / capacity * 100);
   return {
     fromBattery, gridDuring, gridLater, gridAdded, gridCost, exportImpact,
     totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
-    plannedMin, replayMin, deficit, through: cursor,
+    plannedMin, replayMin, plannedEndSoc, replayEndSoc, deficit, through: cursor,
   };
 }
 
@@ -319,6 +322,15 @@ class EmSolarHeadroomCard extends HTMLElement {
         progress::-webkit-progress-bar { background: var(--coverage-track); }
         progress::-webkit-progress-value { background: var(--coverage-color); }
         progress::-moz-progress-bar { background: var(--coverage-color); }
+        .battery-impact {
+          --battery-impact-color: var(--warning-color, #d89013);
+          margin: 8px 0;
+          padding: 8px 10px;
+          border-inline-start: 3px solid var(--battery-impact-color);
+          border-radius: 8px;
+          background: color-mix(in srgb, var(--battery-impact-color) 12%, transparent);
+        }
+        .battery-impact p { margin-top: 3px; }
         #note { margin-top: 8px; }
         @container (max-width: 225px) { .metric strong { font-size: 14px; } }
       </style>
@@ -350,6 +362,10 @@ class EmSolarHeadroomCard extends HTMLElement {
             <div class="metric"><strong id="total-cost"></strong><span>Cost through forecast</span></div>
           </div>
           <progress id="bar" max="1" aria-label="Forecast solar coverage"></progress>
+          <div id="battery-impact" class="battery-impact" role="status" hidden>
+            <strong>Load lowers the forecast battery level</strong>
+            <p id="battery-impact-detail"></p>
+          </div>
           <p id="note"></p>
         </section>
       </ha-card>`;
@@ -529,6 +545,17 @@ class EmSolarHeadroomCard extends HTMLElement {
     set("grid-cost-label", gridCostLabel);
     set("total-cost", formatCost(totalCost));
 
+    const batteryImpact = get("battery-impact");
+    const showBatteryImpact = replay && replay.plannedEndSoc - replay.replayEndSoc >= 0.1;
+    batteryImpact.hidden = !showBatteryImpact;
+    if (showBatteryImpact) {
+      const endSoc = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
+      const planned = endSoc.format(replay.plannedEndSoc / 100);
+      const withLoad = endSoc.format(replay.replayEndSoc / 100);
+      set("battery-impact-detail", "At forecast end, " + withLoad + " with this load vs " +
+        planned + " planned (" + formatEnergy(replay.deficit) + " lower).");
+    }
+    
     if (usesSurplusOnly) {
       set("note", "Uses forecast surplus after house demand, EV and battery charging.");
     } else if (!replay) {
@@ -540,9 +567,7 @@ class EmSolarHeadroomCard extends HTMLElement {
       const soc = value => percentage.format(value / 100);
       const lowest = "Lowest battery SoC " + soc(replay.replayMin) + " · plan " + soc(replay.plannedMin) + ".";
       const horizon = " Through " + day.format(replay.through) + ", " + clock.format(replay.through) + ".";
-      const ending = replay.deficit > energyTolerance ?
-        " Battery ends " + formatEnergy(replay.deficit) + " lower." : "";
-      set("note", charging + lowest + horizon + ending);
+      set("note", charging + lowest + horizon);
     }
   }
 }
