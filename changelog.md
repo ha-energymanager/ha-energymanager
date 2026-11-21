@@ -9,6 +9,7 @@
   * Profiles have been replaced with tabs
   * Up to eight tabs can be created for different views
   * Individual Home Assistant users get their own PV Dashboard tabs
+* Deferred Workloads Planner and Scheduler
 * Marketplace Config-template-card, used for Energy Consumption Card on dashboard
 * Energy Consumption Card as new card in dashboard, hidden by default
 * Battery Level Bar as new card in dashboard, hidden by default
