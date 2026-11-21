@@ -660,7 +660,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       }
       const repeated = input("enabled").checked && input("cadence").value === "repeated";
       row.querySelector(".repeat-days").hidden = !repeated;
-      row.querySelector(".repeat-start").hidden = (!repeated && !job) || input("timing").value !== "fixed";
+      row.querySelector(".repeat-start").hidden = !repeated || input("timing").value !== "fixed";
       row.querySelector(".deadline-label").textContent = repeated || job ? "Finish by" : "Finish by (optional)";
       clearTimeout(this._editTimer);
       this._editTimer = setTimeout(() => this._render(), 200);
@@ -677,12 +677,9 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       input("enabled").closest("label").hidden = true;
       input("cadence").closest("label").hidden = true;
       row.querySelector(".automation-options").hidden = false;
-      row.querySelector(".repeat-start").hidden = job.timing !== "fixed";
+      row.querySelector(".repeat-start").hidden = true;
       row.querySelector(".deadline-label").textContent = "Finish by";
-      input("deadline").type = "datetime-local";
-      input("deadline").value = localDateTime(job.deadline * 1000, timeZone);
-      input("start_at").type = "datetime-local";
-      if (job.start !== null) input("start_at").value = localDateTime(job.start * 1000, timeZone);
+      input("deadline").value = localDateTime(job.deadline * 1000, timeZone).slice(11);
       input("minutes").value = job.duration / 60;
       this._populateAutomations(row);
       for (const field of ["name", "power", "source", "timing", "policy", "start_automation", "stop_automation"]) {
@@ -788,24 +785,14 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         ...(timing === "fixed" ? { start_at: value("start_at") } : {}),
       } : null;
       const edit = this._editing?.job;
-      const editedTime = field => {
-        const [date, clock] = value(field).split("T");
-        return clock ? parseDeadline(clock, timeZone, now, date) : null;
-      };
-      const deadline = edit ? editedTime("deadline") :
-        !repeated && deadlineValue ? parseDeadline(deadlineValue, timeZone, now) : null;
-      const editedStart = edit && timing === "fixed" ? editedTime("start_at") : null;
+      const finishDate = edit ? localDateTime(edit.deadline * 1000, timeZone).slice(0, 10) : null;
+      const deadline = !repeated && deadlineValue ? parseDeadline(deadlineValue, timeZone, now, finishDate) : null;
       let problem = "";
       if (!(power >= 0.1) || !Number.isSafeInteger(minutes) || minutes < 1) {
         problem = "Enter a power and a whole-minute duration.";
       } else if (edit) {
         if (deadline === null || deadline - minutes * minute <= now || deadline - now > 48 * hour) {
-          problem = "Choose a finish time within 48 hours that leaves enough time to run.";
-        } else if (timing === "fixed" && (editedStart === null || editedStart <= now || editedStart + minutes * minute > deadline)) {
-          problem = "Choose a future start time that fits before the deadline.";
-        } else if (edit.run_date && (deadlineValue.slice(0, 10) !== edit.run_date ||
-            (timing === "fixed" && value("start_at").slice(0, 10) !== edit.run_date))) {
-          problem = "Choose times on the original run date.";
+          problem = "Choose a finish time that leaves enough time to run on the original day.";
         }
       } else if (repeat) {
         const finish = clockMinutes(repeat.finish_by);
@@ -823,7 +810,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         id: Number(row.dataset.id), name: value("name").trim() || "Workload " + (index + 1),
         power, duration: minutes * minute, deadline,
         source: value("source"),
-        enabled, timing, repeat, editedStart,
+        enabled, timing, repeat,
         policy: value("policy"),
         start_automation: value("start_automation"),
         stop_automation: value("stop_automation"),
@@ -917,7 +904,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     }
     const jobs = [];
     for (const row of enabled) {
-      const start = edit ? row.editedStart : proposed.get(row.id) ?? null;
+      const start = proposed.get(row.id) ?? null;
       const deadline = row.deadline ?? horizon;
       const label = row.name + " · ";
       if (row.problem) issues.push(label + row.problem);
@@ -941,7 +928,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         issues.push(label + "Choose a finish time for Must run.");
       } else if (deadline - row.duration <= now || deadline - now > 48 * hour) {
         issues.push(label + "Choose a finish time within 48 hours that leaves enough time to run.");
-      } else if (start === null && row.timing === "fixed") {
+      } else if (!edit && start === null && row.timing === "fixed") {
         issues.push(label + "A suitable forecast window is required for a Fixed run.");
       } else if (start === null && row.deadline === null) {
         issues.push(label + "Choose a finish time to approve a run without a suggested window.");
@@ -964,7 +951,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._get("approve").textContent = edit ? "Save changes" : enabled.some(row => row.repeat) ? "Approve schedule" :
       enabled.length === 1 ? "Approve run" : "Approve " + enabled.length + " runs";
     this._get("approval-note").textContent = issues.join(" ") || (edit ?
-      "Changes take effect when saved. Flexible runs are replanned." : enabled.some(row => row.policy === "must") ?
+      "The scheduler picks a new start when you save. Fixed runs keep that start time." : enabled.some(row => row.policy === "must") ?
       "Must run can use grid energy. A Flexible run may move up to its latest start." :
       "Home Assistant will run this schedule when the dashboard is closed.");
   }
