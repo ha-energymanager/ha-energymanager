@@ -373,7 +373,6 @@ input_select:
       - "main"
       - "early"
       - "test"
-      - "development"
     icon: mdi:github
 
   dynamic_reserve_strategy:
