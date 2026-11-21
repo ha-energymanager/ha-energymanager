@@ -1,5 +1,6 @@
 const cardType = "em-solar-headroom-card";
 const defaultEntity = "sensor.energy_manager_plan";
+const defaultCapacityEntity = "input_number.battery_capacity";
 const minute = 60000;
 const hour = 60 * minute;
 const energyTolerance = 1e-7;
@@ -39,11 +40,32 @@ function extractIntervals(timeline, earliest) {
     const gridExport = nonnegative(expected?.grid_export_kw);
     if ([solar, totalLoad, charge, discharge, gridImport, gridExport].includes(null)) continue;
 
-    // Only use forecast exports that can be attributed to solar. Keep the planned
-    // battery charge intact and don't assume curtailed production can recover.
     const headroom = gridImport > 0.005 ? 0 :
       Math.max(0, Math.min(solar - totalLoad - charge, gridExport - discharge));
-    intervals.push({ start, end, headroom, sellPrice: finite(inputs?.sell_price) });
+    const controls = row.setpoints;
+    const constraints = row.constraints;
+    const forcedExport = row.mode === "FORCED_EXPORT" || nonnegative(controls?.force_export_kw) > 0;
+    const minSoc = nonnegative(constraints?.min_soc_pct);
+    const reserve = nonnegative(controls?.soc_reserve_pct);
+    const startSoc = nonnegative(inputs?.soc_pct_start);
+    const endSoc = nonnegative(expected?.soc_pct_end);
+
+    const tapered = forcedExport && discharge > 0 &&
+      gridExport + 0.005 < nonnegative(controls?.force_export_kw);
+    intervals.push({
+      start, end, headroom, charge, discharge, gridExport, startSoc, endSoc,
+      buyPrice: finite(inputs?.buy_price),
+      sellPrice: finite(inputs?.sell_price),
+      floor: minSoc === null || reserve === null ? null :
+        Math.max(minSoc, reserve, forcedExport ? nonnegative(constraints?.peak_reserve_pct) ?? 0 : 0,
+          tapered ? endSoc ?? 0 : 0),
+      restrictedBelow: constraints?.battery_discharge_restriction_enabled === true ?
+        nonnegative(constraints.battery_discharge_restriction_under_pct) ?? 0 : 0,
+      chargeLimit: nonnegative(controls?.charge_limit_kw),
+      dischargeLimit: nonnegative(controls?.discharge_limit_kw),
+      canSelfConsume: row.mode === "SELF_CONSUMPTION" && !forcedExport &&
+        nonnegative(controls?.force_charge_kw) === 0,
+    });
   }
 
   return intervals.sort((a, b) => a.start - b.start);
@@ -105,6 +127,100 @@ function bestWindow(intervals, earliest, minutes, power) {
   return best;
 }
 
+function replayWindow(intervals, window, power, battery) {
+  if (!battery.capacity) return null;
+  const { start, end } = window;
+  const { capacity, chargeEfficiency, dischargeEfficiency } = battery;
+  let cursor = start;
+  let deficit = 0; // Stored battery energy missing relative to the original plan, in kWh.
+  let fromBattery = 0;
+  let gridDuring = 0;
+  let gridLater = 0;
+  let gridAdded = 0;
+  let gridCost = 0;
+  let exportImpact = 0;
+  let plannedMin = 100;
+  let replayMin = 100;
+
+  for (const interval of intervals) {
+    if (interval.end <= cursor) continue;
+    if (interval.start > cursor ||
+        [interval.startSoc, interval.endSoc, interval.floor].some(soc => soc === null || soc > 100)) {
+      return null;
+    }
+
+    const socAt = ts => interval.startSoc + (interval.endSoc - interval.startSoc) *
+      (ts - interval.start) / (interval.end - interval.start);
+    while (cursor < interval.end) {
+      const running = cursor < end;
+      const segmentEnd = running ? Math.min(interval.end, end) : interval.end;
+      const hours = (segmentEnd - cursor) / hour;
+      const baseStart = socAt(cursor);
+      const baseEnd = socAt(segmentEnd);
+      const floor = Math.min(baseEnd, interval.floor);
+
+      plannedMin = Math.min(plannedMin, baseStart, baseEnd);
+      replayMin = Math.min(replayMin, Math.max(0, baseStart - deficit / capacity * 100));
+
+      const shortage = Math.max(0, deficit - capacity * (baseEnd - floor) / 100);
+      const lostDischarge = Math.min(interval.discharge * hours, shortage * dischargeEfficiency);
+      deficit = Math.max(0, deficit - lostDischarge / dischargeEfficiency);
+      const exported = interval.gridExport * hours;
+      let lostExport = Math.min(exported, lostDischarge);
+      let extraGrid = lostDischarge - lostExport;
+
+      const solarExport = interval.headroom * hours;
+      const solar = running ? Math.min(power * hours, solarExport) : 0;
+      let applianceRemainder = running ? power * hours - solar : 0;
+      const plannedBatteryExport = Math.min(interval.discharge * hours - lostDischarge,
+        Math.max(0, exported - lostExport - solarExport));
+      const divertedBattery = Math.min(applianceRemainder, plannedBatteryExport);
+      applianceRemainder -= divertedBattery;
+      lostExport += solar + divertedBattery;
+
+      let extraBattery = 0;
+      if (interval.canSelfConsume && interval.charge <= 0.005 && applianceRemainder > energyTolerance) {
+        if (interval.dischargeLimit === null) return null;
+        const reserve = Math.max(interval.floor, interval.restrictedBelow);
+        const storedAvailable = Math.max(0, capacity * (baseEnd - reserve) / 100 - deficit);
+        const powerAvailable = Math.max(0, (interval.dischargeLimit - interval.discharge) * hours + lostDischarge);
+        extraBattery = Math.min(applianceRemainder, storedAvailable * dischargeEfficiency, powerAvailable);
+        deficit += extraBattery / dischargeEfficiency;
+      }
+      const applianceGrid = Math.max(0, applianceRemainder - extraBattery);
+      const spareSolar = Math.max(0, solarExport - solar);
+      if (interval.canSelfConsume && interval.discharge <= 0.005 &&
+          deficit > energyTolerance && spareSolar > energyTolerance && interval.chargeLimit !== null) {
+        const chargeRoom = Math.max(0, interval.chargeLimit - interval.charge) * hours;
+        const refill = Math.min(spareSolar, chargeRoom, deficit / chargeEfficiency);
+        deficit = Math.max(0, deficit - refill * chargeEfficiency);
+        lostExport += refill;
+      }
+
+      fromBattery += divertedBattery + extraBattery;
+      if (running) gridDuring += applianceGrid;
+      else gridLater += extraGrid;
+      extraGrid += applianceGrid;
+      gridAdded += extraGrid;
+      if (extraGrid > energyTolerance && gridCost !== null) {
+        gridCost = interval.buyPrice === null ? null : gridCost + extraGrid * interval.buyPrice;
+      }
+      if (lostExport > energyTolerance && exportImpact !== null) {
+        exportImpact = interval.sellPrice === null ? null : exportImpact + lostExport * interval.sellPrice;
+      }
+      replayMin = Math.min(replayMin, Math.max(0, baseEnd - deficit / capacity * 100));
+      cursor = segmentEnd;
+    }
+  }
+
+  if (cursor < end) return null;
+  return {
+    fromBattery, gridDuring, gridLater, gridAdded, gridCost, exportImpact,
+    totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
+    plannedMin, replayMin, deficit, through: cursor,
+  };
+}
+
 class EmSolarHeadroomCard extends HTMLElement {
   constructor() {
     super();
@@ -151,10 +267,9 @@ class EmSolarHeadroomCard extends HTMLElement {
           --coverage-track: var(--divider-color, #8885);
         }
         #result[data-coverage="full"] { --coverage-color: #eab308; }
-        #result[data-coverage="none"] {
-          --coverage-color: #dc2626;
-          --coverage-track: var(--coverage-color);
-        }
+        #result[data-coverage="mostly-grid"],
+        #result[data-coverage="none"] { --coverage-color: #dc2626; }
+        #result[data-coverage="none"] { --coverage-track: var(--coverage-color); }
         .window {
           border-radius: 8px;
           border-left: 3px solid var(--coverage-color);
@@ -209,7 +324,11 @@ class EmSolarHeadroomCard extends HTMLElement {
           </div>
           <div class="metrics">
             <div class="metric"><strong id="coverage"></strong><span id="energy"></span></div>
+            <div class="metric"><strong id="battery"></strong><span>Battery during run</span></div>
+            <div class="metric"><strong id="grid"></strong><span>Grid during run</span></div>
+            <div class="metric"><strong id="grid-cost"></strong><span id="grid-cost-label"></span></div>
             <div class="metric"><strong id="money"></strong><span id="money-label"></span></div>
+            <div class="metric"><strong id="total-cost"></strong><span>Cost through forecast</span></div>
           </div>
           <progress id="bar" max="1" aria-label="Forecast solar coverage"></progress>
           <p id="note"></p>
@@ -235,8 +354,18 @@ class EmSolarHeadroomCard extends HTMLElement {
     }
     if (!(maxAge > 0)) throw new Error("max_plan_age_minutes must be greater than zero");
 
+    const chargeEfficiency = finite(config.battery_charge_efficiency ?? 0.95);
+    const dischargeEfficiency = finite(config.battery_discharge_efficiency ?? 0.95);
+    if (!(chargeEfficiency > 0 && chargeEfficiency <= 1 && dischargeEfficiency > 0 && dischargeEfficiency <= 1)) {
+      throw new Error("Battery efficiencies must be greater than zero and at most 1");
+    }
+    
     this._config = {
       entity: config.entity ?? defaultEntity,
+      capacityEntity: config.battery_capacity_entity ?? defaultCapacityEntity,
+      capacity: nonnegative(config.battery_capacity_kwh),
+      chargeEfficiency,
+      dischargeEfficiency,
       name: config.name ?? "Solar Headroom",
       maxAge: maxAge * minute,
     };
@@ -252,7 +381,9 @@ class EmSolarHeadroomCard extends HTMLElement {
     const entity = this._config.entity;
     if (!previous || previous.language !== hass?.language ||
         previous.config?.time_zone !== hass?.config?.time_zone ||
-        previous.states?.[entity] !== hass?.states?.[entity]) {
+        previous.states?.[entity] !== hass?.states?.[entity] ||
+        previous.states?.[this._config.capacityEntity] !== hass?.states?.[this._config.capacityEntity]) {
+        previous.states?.[this._config.capacityEntity] !== hass?.states?.[this._config.capacityEntity]) {
       this._render();
     }
   }
@@ -314,7 +445,15 @@ class EmSolarHeadroomCard extends HTMLElement {
       return;
     }
     const hasSolar = best.covered > energyTolerance;
-
+    const configuredCapacity = this._config.capacity;
+    const entityCapacity = nonnegative(this._hass.states?.[this._config.capacityEntity]?.state);
+    const capacity = configuredCapacity || entityCapacity;
+    const replay = best.fullSolar ? null : replayWindow(intervals, best, power, {
+      capacity,
+      chargeEfficiency: this._config.chargeEfficiency,
+      dischargeEfficiency: this._config.dischargeEfficiency,
+    });
+    
     const locale = this._hass.language || undefined;
     const timeZone = this._hass.config?.time_zone;
     const clock = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone });
@@ -330,17 +469,25 @@ class EmSolarHeadroomCard extends HTMLElement {
     const displayedFraction = best.fullSolar ? 1 : Math.min(0.99, fraction);
     const percentage = new Intl.NumberFormat(locale, { style: "percent" });
     const energy = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
-    const amount = best.exportImpact;
+    const amount = replay ? replay.exportImpact : best.exportImpact;
+    const gridCost = best.fullSolar ? 0 : replay?.gridCost ?? null;
+    const totalCost = best.fullSolar ? amount : replay?.totalCost ?? null;
     const cents = amount !== null ? Math.round(Math.abs(amount) * 100) : null;
     const currency = new Intl.NumberFormat(locale, { style: "currency", currency: "AUD", currencyDisplay: "narrowSymbol" });
 
     get("status").hidden = true;
     const result = get("result");
     result.hidden = false;
-    result.dataset.coverage = !hasSolar ? "none" : best.fullSolar ? "full" : "partial";
-    set("result-label", !hasSolar ? "Solar coverage" :
+    let coverage = hasSolar ? "partial" : "none";
+    if (best.fullSolar) coverage = "full";
+    else if (replay) {
+      coverage = replay.gridDuring >= best.required - energyTolerance ? "none" :
+        replay.gridDuring - best.required / 2 > energyTolerance ? "mostly-grid" : "partial";
+    }
+    result.dataset.coverage = coverage;
+    set("result-label", !hasSolar ? "No excess solar · Earliest window" :
       best.fullSolar ? "Best time to run on solar" : "Best partial-solar window");
-    set("window", hasSolar ? startLabel + ", " + from + " – " + endLabel : "No excess solar forecast");
+    set("window", startLabel + ", " + from + " – " + endLabel);
     set("coverage", percentage.format(displayedFraction));
     set("energy", energy.format(best.covered) + " of " + energy.format(best.required) + " kWh from solar");
     get("bar").value = fraction;
@@ -348,12 +495,32 @@ class EmSolarHeadroomCard extends HTMLElement {
     set("money", cents === null ? "—" : currency.format(Math.abs(amount)));
     const tradeOff = amount > 0 ? "Feed-in credit forgone" : "Export charges avoided";
     set("money-label", cents === null ? "Feed-in price unavailable" : cents ? tradeOff : "Feed-in impact");
-    if (!hasSolar) {
-      set("note", "This load would rely on the battery or grid.");
-    } else {
-      set("note", best.fullSolar
-        ? "Uses forecast surplus after house demand, EV and battery charging."
-        : "No full-solar window found. The remaining load may draw from the battery or grid.");
+    const formatEnergy = value => value === null ? "—" : energy.format(value) + " kWh";
+    const formatCost = value => value === null ? "—" : currency.format(value);
+    set("battery", formatEnergy(best.fullSolar ? 0 : replay?.fromBattery ?? null));
+    set("grid", formatEnergy(best.fullSolar ? 0 : replay?.gridDuring ?? null));
+    set("grid-cost", formatCost(gridCost));
+    let gridCostLabel = "Extra grid cost";
+    if (replay?.gridLater > energyTolerance) {
+      gridCostLabel = "Grid cost · includes " + formatEnergy(replay.gridLater) + " later";
+    } else if (best.fullSolar || (replay && replay.gridAdded <= energyTolerance)) {
+      gridCostLabel = "No extra grid use forecast";
+    }
+    set("grid-cost-label", gridCostLabel);
+    set("total-cost", formatCost(totalCost));
+
+    if (best.fullSolar) {
+      set("note", "Uses forecast surplus after house demand, EV and battery charging.");
+    } else if (!replay) {
+      set("note", capacity ? "Battery and grid impact are unavailable with the current plan data." :
+        "Set the battery capacity to estimate battery and grid impact.");
+   } else {
+      const soc = value => percentage.format(value / 100);
+      const lowest = "Lowest battery SoC " + soc(replay.replayMin) + " · plan " + soc(replay.plannedMin) + ".";
+      const horizon = " Through " + day.format(replay.through) + ", " + clock.format(replay.through) + ".";
+      const ending = replay.deficit > energyTolerance ?
+        " Battery ends " + formatEnergy(replay.deficit) + " lower." : "";
+      set("note", lowest + horizon + ending);
     }
   }
 }
