@@ -660,6 +660,29 @@
       "backup_current": false,
       "new_in_version": "2.0.0"
     },
+    "custom_components/em_deferred_workloads/__init__.py": {
+      "action": "replace",
+      "description": "Deferred Worksloads Planner Component",
+      "backup_current": true,
+      "new_in_version": "2.0.0"
+    },
+    "custom_components/em_deferred_workloads/planer.py": {
+      "action": "replace",
+      "description": "Deferred Worksloads Planner",
+      "new_in_version": "2.1.0"
+    },
+    "custom_components/em_deferred_workloads/manifest.json": {
+      "action": "replace",
+      "description": "Manifest for Deferred Worksloads Planner Component",
+      "backup_current": true,
+      "new_in_version": "2.0.0"
+    },
+    "custom_components/em_deferred_workloads/brand/icon.png": {
+      "action": "replace",
+      "description": "Energy Manager Logo",
+      "backup_current": false,
+      "new_in_version": "2.0.0"
+    }   
     ".energy_manager/layout_profiles/v2.json": {
       "action": "replace",
       "description": "Bundled v2 dashboard layout",
