@@ -418,11 +418,23 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         button:disabled { opacity: 0.55; cursor: default; }
         #approval-note, #action-status { margin-top: 5px; }
         #approved { border-top: 1px solid var(--planner-line); margin-top: 14px; padding-top: 12px; }
-        #repeat-list, #approved-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 8px 0 0; }
-        #occurrences { margin-top: 12px; }
+        #repeat-list, #approved-list, #history-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 8px 0 0; }
+        #occurrences, #history { margin-top: 12px; }
         .approved-run { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px;
-          align-items: center; border: 1px solid var(--planner-line); padding: 8px 10px; border-radius: 7px;
+          align-items: center; border: 1px solid var(--run-border, var(--planner-line));
+          background: var(--run-fill, transparent); padding: 8px 10px; border-radius: 7px;
           overflow-wrap: anywhere; font-size: 13px; }
+        .approved-run[data-status] {
+          --run-fill: color-mix(in srgb, var(--run-color, transparent) 12%, transparent);
+          --run-border: color-mix(in srgb, var(--run-color, var(--planner-line)) 75%, var(--primary-text-color, #242424) 25%);
+        }
+        .approved-run:is([data-status="scheduled"], [data-status="starting"], [data-status="running"], [data-status="stopping"]) {
+          --run-color: #418454;
+        }
+        .approved-run[data-status="skipped"] { --run-color: #3b80bd; }
+        .approved-run[data-status="repeat"] { --run-color: #7866ae; }
+        .approved-run[data-status="delayed"] { --run-color: #a4792d; }
+        .approved-run:is([data-status="failed"], [data-status="stop_failed"]) { --run-color: #b65764; }
         .approved-run small { display: block; }
         #status { margin-top: 12px; color: var(--planner-muted); }
         #schedule { border-top: 1px solid var(--planner-line); margin-top: 14px; padding-top: 12px; }
@@ -519,19 +531,27 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         </div>
         <p id="action-status" class="muted" role="status" hidden></p>
         <section id="approved" aria-labelledby="approved-title" hidden>
-          <h3 id="approved-title">Approved runs</h3>
+          <h3 id="approved-title">Approved workloads</h3>
           <div id="repeats" hidden>
             <h3>Repeated schedules</h3>
             <ul id="repeat-list"></ul>
           </div>
           <div id="occurrences" hidden>
-            <h3>Runs</h3>
+            <h3>Scheduled and in-progress runs</h3>
             <ul id="approved-list"></ul>
+          </div>
+          <div id="history" hidden>
+            <div class="schedule-heading">
+              <h3>Recent workload runs</h3>
+              <button id="clear-cancelled" type="button" hidden>Clear cancelled runs</button>
+            </div>
+            <ul id="history-list"></ul>
           </div>
         </section>
       </ha-card>`;
     this._get("add").addEventListener("click", () => this._addWorkload(false, true));
     this._get("approve").addEventListener("click", () => this._approve());
+    this._get("clear-cancelled").addEventListener("click", event => this._clearCancelled(event.currentTarget));
     this._addWorkload(true);
   }
 
@@ -637,10 +657,23 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._render();
   }
 
+  _automationExcluded(entityId) {
+    const friendlyName = this._hass?.states?.[entityId]?.attributes?.friendly_name ?? "";
+    const name = friendlyName.toLowerCase().match(/[a-z0-9]+/g)?.join("_") ?? "";
+    const key = entityId.slice("automation.".length).replace(/_\d+$/, "");
+    const exclusions = this._backend?.automation_exclusions;
+    return !exclusions || exclusions.includes(key) || exclusions.includes(name);
+  }
+
+  _automationSelectable(entityId) {
+    return entityId.startsWith("automation.") && !this._automationExcluded(entityId) &&
+      ["on", "off"].includes(this._hass?.states?.[entityId]?.state);
+  }
+
   _populateAutomations(row) {
     const states = this._hass?.states ?? {};
     const choices = Object.values(states)
-      .filter(state => state.entity_id.startsWith("automation.") && ["on", "off"].includes(state.state))
+      .filter(state => this._automationSelectable(state.entity_id))
       .map(state => [state.entity_id, state.attributes.friendly_name || state.entity_id])
       .sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
     for (const field of ["start_automation", "stop_automation"]) {
@@ -648,10 +681,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       const previous = select.value;
       select.replaceChildren(new Option(field === "start_automation" ? "Select an automation" : "None", ""));
       for (const [id, name] of choices) select.add(new Option(name, id));
-      if (previous && !choices.some(([id]) => id === previous)) {
+      if (previous && !this._automationExcluded(previous) && !choices.some(([id]) => id === previous)) {
         select.add(new Option(previous + " (unavailable)", previous));
       }
-      select.value = previous;
+      select.value = this._automationExcluded(previous) ? "" : previous;
     }
   }
 
@@ -664,7 +697,13 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._subscription = subscription;
     connection.subscribeMessage(data => {
       if (this._subscription !== subscription) return;
+      const filtersLoaded = !this._backend?.automation_exclusions && data.automation_exclusions;
       this._backend = data;
+      if (filtersLoaded) {
+        for (const row of this._get("editors").children) {
+          if (row.querySelector('[data-field="enabled"]').checked) this._populateAutomations(row);
+        }
+      }
       this._render();
     }, { type: schedulerDomain + "/subscribe" }).then(unsubscribe => {
       if (this._subscription === subscription) subscription.unsubscribe = unsubscribe;
@@ -778,6 +817,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       issues.push(this._subscription?.failed ? "Install or restart the Home Assistant workload scheduler." :
         "Connecting to the Home Assistant workload scheduler.");
     } else {
+      if (!backend.automation_exclusions) issues.push("Update the Home Assistant workload scheduler.");
       const config = backend.config;
       if (config.entity !== entity || config.battery_capacity_entity !== capacityEntity ||
           (config.battery_capacity_kwh ?? null) !== (capacity || null) ||
@@ -794,10 +834,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       const deadline = row.deadline ?? horizon;
       const label = row.name + " · ";
       if (row.problem) issues.push(label + row.problem);
-      else if (!["on", "off"].includes(this._hass?.states?.[row.start_automation]?.state)) {
+      else if (!this._automationSelectable(row.start_automation)) {
         issues.push(label + "Choose a start automation.");
       } else if (row.stop_automation && (row.stop_automation === row.start_automation ||
-          !["on", "off"].includes(this._hass?.states?.[row.stop_automation]?.state))) {
+          !this._automationSelectable(row.stop_automation))) {
         issues.push(label + "Choose a different available stop automation.");
       } else if (row.duration > 24 * hour || row.power > 1000) {
         issues.push(label + "Use a duration up to 24 hours and power up to 1,000 kW.");
@@ -848,7 +888,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
 
   async _approve() {
     const shown = JSON.stringify(this._approval);
-    this._render(); 
+    this._render();
     if (!this._approval || this._saving) return;
     if (shown !== JSON.stringify(this._approval)) {
       this._actionStatus("The suggested schedule changed. Review the updated times before approving.");
@@ -885,6 +925,18 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     }
   }
 
+  async _clearCancelled(button) {
+    button.disabled = true;
+    try {
+      const { count } = await this._hass.callWS({ type: schedulerDomain + "/clear_cancelled" });
+      this._actionStatus(count === 1 ? "Cleared 1 cancelled run." : "Cleared " + count + " cancelled runs.");
+    } catch (error) {
+      this._actionStatus(error?.message || "Could not clear cancelled runs.");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   _runButton(label, action, job, message, name = job.name) {
     const button = document.createElement("button");
     button.type = "button";
@@ -902,13 +954,19 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     const repeats = this._backend?.repeats ?? [];
     this._get("approved").hidden = !jobs.length && !repeats.length;
     this._get("repeats").hidden = !repeats.length;
-    this._get("occurrences").hidden = !jobs.length;
+    const admin = this._hass?.user?.is_admin;
+    const current = new Set(["scheduled", "delayed", "starting", "running", "stopping", "stop_failed"]);
+    this._get("occurrences").hidden = !jobs.some(job => current.has(job.status));
+    this._get("history").hidden = !jobs.some(job => !current.has(job.status));
+    this._get("clear-cancelled").hidden = !admin || !this._backend?.automation_exclusions ||
+      !jobs.some(job => job.status === "cancelled");
     const repeatList = this._get("repeat-list");
     repeatList.replaceChildren();
     for (const entry of repeats) {
       const rule = entry.approval.repeat;
       const item = document.createElement("li");
       item.className = "approved-run";
+      item.dataset.status = "repeat";
       const summary = document.createElement("div");
       const title = document.createElement("strong");
       title.textContent = entry.approval.name;
@@ -919,11 +977,15 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         "Finish by " + rule.finish_by + " · " + entry.approval.duration / 60 + " min";
       summary.append(title, detail);
       item.append(summary);
-      if (this._hass.user?.is_admin) {
+      if (admin) {
         item.append(this._runButton("Cancel repeat", "cancel_repeat", entry, "Repeated schedule cancelled.", entry.approval.name));
       }
       repeatList.append(item);
     }
+    const list = this._get("approved-list");
+    const history = this._get("history-list");
+    list.replaceChildren();
+    history.replaceChildren();
     if (!jobs.length) return;
     const labels = {
       scheduled: "Scheduled", delayed: "Delayed", starting: "Starting", running: "Running",
@@ -937,16 +999,15 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     const dateOnly = new Intl.DateTimeFormat(this._hass.language || undefined, {
       weekday: "short", month: "short", day: "numeric", timeZone: this._hass.config?.time_zone || undefined,
     });
-    const primary = new Set(["scheduled", "delayed", "starting", "running", "stopping", "stop_failed"]);
-    const sorted = [...jobs].sort((a, b) => Number(primary.has(b.status)) - Number(primary.has(a.status)) ||
-      (primary.has(a.status) ? (a.actual_start ?? a.start ?? a.deadline) - (b.actual_start ?? b.start ?? b.deadline) :
+    const now = Date.now() / 1000;
+    const sorted = [...jobs].sort((a, b) => Number(current.has(b.status)) - Number(current.has(a.status)) ||
+      (current.has(a.status) ? (a.actual_start ?? a.start ?? a.deadline) - (b.actual_start ?? b.start ?? b.deadline) :
         b.created - a.created));
-    const list = this._get("approved-list");
-    list.replaceChildren();
     for (const job of sorted) {
       const item = document.createElement("li");
       item.className = "approved-run";
       const summary = document.createElement("div");
+      item.dataset.status = job.status;
       const title = document.createElement("strong");
       title.textContent = job.name + " · " + (labels[job.status] ?? job.status);
       const time = document.createElement("small");
@@ -960,13 +1021,15 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       note.textContent = job.note;
       summary.append(title, time, note);
       item.append(summary);
-      if (this._hass.user?.is_admin && ["scheduled", "delayed", "stop_failed"].includes(job.status)) {
+      if (admin && ["scheduled", "delayed", "stop_failed"].includes(job.status)) {
         const action = job.status === "stop_failed" ? "retry_stop" : "cancel";
         const label = action === "retry_stop" ? "Retry stop" : job.repeat_id ? "Skip today" : "Cancel";
         const message = action === "retry_stop" ? "Stop requested." : job.repeat_id ? "Today's run skipped." : "Run cancelled.";
         item.append(this._runButton(label, action, job, message));
+      } else if (admin && job.status === "skipped" && job.unskip_until > now) {
+        item.append(this._runButton("Unskip today", "unskip", job, "Today's run restored."));
       }
-      list.append(item);
+      (current.has(job.status) ? list : history).append(item);
     }
   }
 
