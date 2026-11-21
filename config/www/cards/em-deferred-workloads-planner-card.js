@@ -1,4 +1,5 @@
 const cardType = "em-deferred-workloads-planner-card";
+const schedulerDomain = "em_deferred_workloads";
 const defaultEntity = "sensor.energy_manager_plan";
 const defaultCapacityEntity = "input_number.battery_capacity";
 const minute = 60000;
@@ -55,7 +56,8 @@ function extractIntervals(timeline, earliest) {
 
     const tapered = forcedExport && discharge > 0 &&
       gridExport + 0.005 < nonnegative(controls?.force_export_kw);
-
+    // Only solar already assigned to flexible battery charging is available
+    // here. Household and planned EV demand are already in totalLoad.
     const flexibleSolarCharge = canSelfConsume && gridImport <= forecastRoundingKw &&
       discharge <= forecastRoundingKw ? Math.min(charge, Math.max(0, solar - totalLoad - headroom)) : 0;
     intervals.push({
@@ -107,11 +109,13 @@ function addCost(total, energy, rate) {
   return total === null || rate === null ? null : total + energy * rate;
 }
 
+// Replay all assigned workloads against one forecast. Earlier battery use
+// carries forward into later workloads and normal household consumption.
 function evaluateSchedule(intervals, placements, battery) {
   const jobs = placements.map(window => ({
     ...window, solar: 0, divertedSolar: 0, battery: 0, grid: 0, cost: 0,
   }));
-
+  // Allocate limited sources to the solar-only policies before battery/grid users.
   jobs.sort((a, b) => sourceOrder[a.source] - sourceOrder[b.source] || a.id - b.id);
   let deficit = 0;
   let priorityDeficit = 0;
@@ -190,7 +194,7 @@ function evaluateSchedule(intervals, placements, battery) {
         deficit += deferredEnergy;
         priorityDeficit += deferredEnergy;
       }
-
+      // Use remaining forecast exports to refill within the charge limit.
       if (battery && deficit > energyTolerance && row.canSelfConsume &&
           row.discharge <= forecastRoundingKw && row.chargeLimit !== null) {
         const room = Math.max(0, (row.chargeLimit - row.charge) * hours + divertedCharge);
@@ -198,7 +202,7 @@ function evaluateSchedule(intervals, placements, battery) {
         deficit = Math.max(0, deficit - refill * battery.chargeEfficiency);
         exportUsed += refill;
       }
-
+      // Count any recovery against the protected workloads' share first.
       priorityDeficit = Math.min(priorityDeficit, deficit);
       if (battery && to === row.end && row.charge > forecastRoundingKw &&
           row.chargeTarget !== null && row.endSoc >= row.chargeTarget - 0.05) {
@@ -269,7 +273,8 @@ function recommend(intervals, workloads, battery) {
       .filter(candidate => candidate.result);
     return { ...job, latest, candidates };
   });
-
+  // Try the constrained jobs first. Keep alternative schedules so a cheap
+  // individual window cannot automatically displace another workload.
   jobs.sort((a, b) => (a.candidates.length || Infinity) - (b.candidates.length || Infinity) ||
     (a.deadline ?? horizon) - (b.deadline ?? horizon) || sourceOrder[a.source] - sourceOrder[b.source] ||
     b.duration - a.duration || a.id - b.id);
@@ -294,10 +299,18 @@ function recommend(intervals, workloads, battery) {
     }
     alternatives.sort(compareSchedules);
     schedules = alternatives.slice(0, beamWidth);
-
+    // Retain the empty schedule when it has fallen out of the shortlist.
     if (!schedules.includes(empty)) schedules.push(empty);
   }
   return schedules[0];
+}
+
+function approvalId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
 }
 
 function wallTime(timestamp, formatter) {
@@ -314,7 +327,8 @@ function parseDeadline(value, timeZone, now) {
   });
   const earliest = Math.floor(now / minute) * minute;
   const localMidnight = Math.floor(wallTime(earliest, formatter) / (24 * hour)) * 24 * hour;
-
+  // Use the next occurrence in Home Assistant's timezone. Check both offsets
+  // around a daylight-saving change so repeated local times resolve correctly.
   for (const day of [localMidnight, localMidnight + 24 * hour]) {
     const target = day + hours * hour + minutes * minute;
     const candidates = [-36, 0, 36].map(delta => target + delta * hour)
@@ -389,6 +403,20 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         }
         .remove { padding: 0; font-size: 19px; }
         .editor-toolbar { margin-top: 10px; }
+        .schedule-toggle, .automation-options { grid-column: 1 / -1; }
+        .schedule-toggle { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+        .schedule-toggle input { width: auto; min-height: auto; margin: 0; accent-color: var(--primary-color); }
+        .automation-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        #approval { margin-top: 10px; }
+        #approval button { border-color: var(--primary-color, #03a9f4); font-weight: 600; }
+        button:disabled { opacity: 0.55; cursor: default; }
+        #approval-note, #action-status { margin-top: 5px; }
+        #approved { border-top: 1px solid var(--planner-line); margin-top: 14px; padding-top: 12px; }
+        #approved-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 8px 0 0; }
+        .approved-run { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px;
+          align-items: center; border: 1px solid var(--planner-line); padding: 8px 10px; border-radius: 7px;
+          overflow-wrap: anywhere; font-size: 13px; }
+        .approved-run small { display: block; }
         #status { margin-top: 12px; color: var(--planner-muted); }
         #schedule { border-top: 1px solid var(--planner-line); margin-top: 14px; padding-top: 12px; }
         .schedule-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
@@ -421,6 +449,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           .workload-deadline { grid-area: deadline; }
           .power-source { grid-area: source; }
           .remove { grid-area: remove; }
+          .schedule-toggle { grid-row: 4; }
+          .automation-options { grid-row: 5; }
           .recommendation { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
           .recommendation .detail { grid-column: 1 / -1; }
         }
@@ -429,6 +459,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
             grid-template-areas: "name name remove" "power duration duration"
               "deadline deadline deadline" "source source source";
           }
+          .schedule-toggle { grid-row: 5; }
+          .automation-options { grid-row: 6; grid-template-columns: 1fr; }
         }
       </style>
       <ha-card>
@@ -439,12 +471,23 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         <div id="editors"></div>
         <template id="editor">
           <div class="editor">
-            <label class="workload-name">Workload<input data-field="name" type="text" placeholder="Workload name"></label>
+            <label class="workload-name">Workload<input data-field="name" type="text" maxlength="80" placeholder="Workload name"></label>
             <label class="workload-power">Power (kW)<input data-field="power" type="number" min="0.1" step="0.1" inputmode="decimal"></label>
             <label class="workload-duration">Duration (min)<input data-field="minutes" type="number" min="1" step="1" inputmode="numeric"></label>
             <label class="workload-deadline">Finish by (optional)<input data-field="deadline" type="time" step="60"></label>
             <label class="power-source">Power source<select data-field="source"></select></label>
             <button class="remove" type="button" aria-label="Remove workload" title="Remove workload">×</button>
+            <label class="schedule-toggle"><input data-field="enabled" type="checkbox"> Enable schedule</label>
+            <div class="automation-options" hidden>
+              <label>Start automation<select data-field="start_automation" required></select></label>
+              <label>Stop automation (optional)<select data-field="stop_automation"></select></label>
+              <label>Timing<select data-field="timing">
+                <option value="fixed">Fixed</option><option value="flexible">Flexible</option>
+              </select></label>
+              <label>If the forecast changes<select data-field="policy">
+                <option value="defer">May be deferred</option><option value="must">Must run</option>
+              </select></label>
+            </div>
           </div>
         </template>
         <div class="editor-toolbar"><button id="add" type="button">+ Add workload</button></div>
@@ -454,9 +497,19 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           <ul id="recommendations"></ul>
           <p id="totals"></p>
           <p id="effects" class="muted" hidden></p>
+          <div id="approval" hidden>
+            <button id="approve" type="button">Approve schedule</button>
+            <p id="approval-note" class="muted"></p>
+          </div>
+        </section>
+        <p id="action-status" class="muted" role="status" hidden></p>
+        <section id="approved" aria-labelledby="approved-title" hidden>
+          <h3 id="approved-title">Approved runs</h3>
+          <ul id="approved-list"></ul>
         </section>
       </ha-card>`;
     this._get("add").addEventListener("click", () => this._addWorkload(false, true));
+    this._get("approve").addEventListener("click", () => this._approve());
     this._addWorkload(true);
   }
 
@@ -484,14 +537,17 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
   set hass(hass) {
     const old = this._hass;
     this._hass = hass;
+    this._connectScheduler();
     if (!this._config) return;
     const { entity, capacityEntity } = this._config;
     if (!old || old.states?.[entity] !== hass.states?.[entity] ||
         old.states?.[capacityEntity] !== hass.states?.[capacityEntity] ||
-        old.config?.time_zone !== hass.config?.time_zone || old.language !== hass.language) this._render();
+        old.config?.time_zone !== hass.config?.time_zone || old.language !== hass.language ||
+        old.user?.is_admin !== hass.user?.is_admin) this._render();
   }
 
   connectedCallback() {
+    this._connectScheduler();
     this._clockTimer = setInterval(() => this._render(), minute);
     this._render();
   }
@@ -499,6 +555,9 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._clockTimer);
     clearTimeout(this._editTimer);
+    this._subscription?.unsubscribe?.();
+    this._subscription = null;
+    this._backend = null;
   }
 
   getCardSize() { return 6; }
@@ -520,7 +579,14 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       option.textContent = label;
       input("source").append(option);
     }
-    row.addEventListener("input", () => {
+    for (const field of ["start_automation", "stop_automation"]) {
+      input(field).addEventListener("focus", () => this._populateAutomations(row));
+    }
+    row.addEventListener("input", event => {
+      if (event.target === input("enabled")) {
+        row.querySelector(".automation-options").hidden = !input("enabled").checked;
+        this._populateAutomations(row);
+      }
       clearTimeout(this._editTimer);
       this._editTimer = setTimeout(() => this._render(), 200);
     });
@@ -532,6 +598,45 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._get("editors").append(row);
     if (focus) input("name").focus();
     this._render();
+  }
+
+  _populateAutomations(row) {
+    const states = this._hass?.states ?? {};
+    const choices = Object.values(states)
+      .filter(state => state.entity_id.startsWith("automation.") && ["on", "off"].includes(state.state))
+      .map(state => [state.entity_id, state.attributes.friendly_name || state.entity_id])
+      .sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
+    for (const field of ["start_automation", "stop_automation"]) {
+      const select = row.querySelector(`[data-field="${field}"]`);
+      const previous = select.value;
+      select.replaceChildren(new Option(field === "start_automation" ? "Select an automation" : "None", ""));
+      for (const [id, name] of choices) select.add(new Option(name, id));
+      if (previous && !choices.some(([id]) => id === previous)) {
+        select.add(new Option(previous + " (unavailable)", previous));
+      }
+      select.value = previous;
+    }
+  }
+
+  _connectScheduler() {
+    const connection = this._hass?.connection;
+    if (!this.isConnected || !connection || this._subscription?.connection === connection) return;
+    this._subscription?.unsubscribe?.();
+    this._backend = null;
+    const subscription = { connection };
+    this._subscription = subscription;
+    connection.subscribeMessage(data => {
+      if (this._subscription !== subscription) return;
+      this._backend = data;
+      this._render();
+    }, { type: schedulerDomain + "/subscribe" }).then(unsubscribe => {
+      if (this._subscription === subscription) subscription.unsubscribe = unsubscribe;
+      else unsubscribe();
+    }).catch(() => {
+      if (this._subscription !== subscription) return;
+      subscription.failed = true;
+      this._render();
+    });
   }
 
   _readWorkloads(timeZone, now, earliest) {
@@ -553,6 +658,11 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         id: Number(row.dataset.id), name: value("name").trim() || "Workload " + (index + 1),
         power, duration: minutes * minute, deadline,
         source: value("source"),
+        enabled: row.querySelector('[data-field="enabled"]').checked,
+        timing: value("timing"),
+        policy: value("policy"),
+        start_automation: value("start_automation"),
+        stop_automation: value("stop_automation"),
         problem,
       };
     });
@@ -561,6 +671,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
   _render() {
     if (!this._config) return;
     const { entity, capacityEntity, capacity, maxAge, chargeEfficiency, dischargeEfficiency } = this._config;
+    this._renderApproved();
+    this._approval = null;
     const state = this._hass?.states?.[entity];
     const plan = state?.attributes?.energy_plan;
     const now = Date.now();
@@ -596,8 +708,169 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       { capacity: siteCapacity, chargeEfficiency, dischargeEfficiency } : null;
     const schedule = recommend(intervals, workloads.filter(row => !row.problem), battery);
     this._renderSchedule(workloads, schedule, intervals, battery, timeZone, now);
+    this._renderApproval(workloads, schedule, intervals.at(-1).end, now);
     this._get("status").hidden = true;
     this._get("schedule").hidden = false;
+  }
+
+  _renderApproval(workloads, schedule, horizon, now) {
+    const enabled = workloads.filter(row => row.enabled);
+    this._get("approval").hidden = !enabled.length;
+    if (!enabled.length) return;
+    const backend = this._backend;
+    const { entity, capacityEntity, capacity, maxAge, chargeEfficiency, dischargeEfficiency } = this._config;
+    const proposed = new Map(schedule.jobs.map(row => [row.id, row.start]));
+    const issues = [];
+    if (!backend) {
+      issues.push(this._subscription?.failed ? "Install or restart the Home Assistant workload scheduler." :
+        "Connecting to the Home Assistant workload scheduler.");
+    } else {
+      const config = backend.config;
+      if (config.entity !== entity || config.battery_capacity_entity !== capacityEntity ||
+          (config.battery_capacity_kwh ?? null) !== (capacity || null) ||
+          config.max_plan_age_minutes * minute !== maxAge ||
+          config.battery_charge_efficiency !== chargeEfficiency || config.battery_discharge_efficiency !== dischargeEfficiency) {
+        issues.push("The card and scheduler must use matching forecast settings.");
+      }
+    }
+    if (!this._hass.user?.is_admin) issues.push("A Home Assistant administrator must approve runs.");
+
+    const jobs = [];
+    for (const row of enabled) {
+      const start = proposed.get(row.id) ?? null;
+      const deadline = row.deadline ?? horizon;
+      const label = row.name + " · ";
+      if (row.problem) issues.push(label + row.problem);
+      else if (!["on", "off"].includes(this._hass.states[row.start_automation]?.state)) {
+        issues.push(label + "Choose a start automation.");
+      } else if (row.stop_automation && (row.stop_automation === row.start_automation ||
+          !["on", "off"].includes(this._hass.states[row.stop_automation]?.state))) {
+        issues.push(label + "Choose a different available stop automation.");
+      } else if (row.duration > 24 * hour || row.power > 1000) {
+        issues.push(label + "Use a duration up to 24 hours and power up to 1,000 kW.");
+      } else if (row.timing === "flexible" && row.policy === "must" && row.deadline === null) {
+        issues.push(label + "Choose a finish time for Must run.");
+      } else if (deadline - row.duration <= now || deadline - now > 48 * hour) {
+        issues.push(label + "Choose a finish time within 48 hours that leaves enough time to run.");
+      } else if (start === null && row.timing === "fixed") {
+        issues.push(label + "A suitable forecast window is required for a Fixed run.");
+      } else if (start === null && row.deadline === null) {
+        issues.push(label + "Choose a finish time to approve a run without a suggested window.");
+      } else if (start !== null && Math.floor(start / 1000) * 1000 <= now) {
+        issues.push(label + "The suggested start has passed. Review the refreshed forecast.");
+      } else {
+        jobs.push({
+          rowId: row.id,
+          data: {
+            name: row.name, power: row.power, duration: row.duration / 1000,
+            source: row.source, timing: row.timing, policy: row.policy, start: start === null ? null : Math.floor(start / 1000),
+            deadline: Math.floor(deadline / 1000), start_automation: row.start_automation, stop_automation: row.stop_automation,
+          },
+        });
+      }
+    }
+    if (jobs.length > 12) issues.push("Approve up to 12 workloads at a time.");
+    if (!issues.length) this._approval = jobs;
+    this._get("approve").disabled = Boolean(issues.length) || Boolean(this._saving);
+    this._get("approve").textContent = enabled.length === 1 ? "Approve run" : "Approve " + enabled.length + " runs";
+    this._get("approval-note").textContent = issues.join(" ") || (enabled.some(row => row.policy === "must") ?
+      "Must run can use grid energy. A Flexible run may move up to its latest start." :
+      "Home Assistant will run this schedule when the dashboard is closed.");
+  }
+
+  _actionStatus(message) {
+    this._get("action-status").textContent = message;
+    this._get("action-status").hidden = !message;
+  }
+
+  async _approve() {
+    const shown = JSON.stringify(this._approval);
+    this._render(); // Check pending input edits and forecast changes before saving.
+    if (!this._approval || this._saving) return;
+    if (shown !== JSON.stringify(this._approval)) {
+      this._actionStatus("The suggested schedule changed. Review the updated times before approving.");
+      return;
+    }
+    const drafts = this._approval.map(({ rowId, data }) => {
+      const row = this._get("editors").querySelector(`[data-id="${rowId}"]`);
+      const signature = JSON.stringify(data);
+      if (row.approval?.signature !== signature) row.approval = { signature, id: approvalId() };
+      return { row, data: { ...data, id: row.approval.id } };
+    });
+    this._saving = true;
+    this._actionStatus("Saving the approved schedule…");
+    this._render();
+    try {
+      await this._hass.callWS({ type: schedulerDomain + "/approve", jobs: drafts.map(draft => draft.data) });
+      for (const draft of drafts) draft.row.remove();
+      this._actionStatus(drafts.length === 1 ? "Run approved." : drafts.length + " runs approved.");
+    } catch (error) {
+      this._actionStatus(error?.message || "Could not save the schedule.");
+    } finally {
+      this._saving = false;
+      this._render();
+    }
+  }
+
+  async _changeRun(action, job) {
+    try {
+      await this._hass.callWS({ type: schedulerDomain + "/" + action, job_id: job.id });
+      this._actionStatus(action === "cancel" ? "Run cancelled." : "Stop requested.");
+    } catch (error) {
+      this._actionStatus(error?.message || "Could not update the run.");
+    }
+  }
+
+  _renderApproved() {
+    const jobs = this._backend?.jobs ?? [];
+    const section = this._get("approved");
+    section.hidden = !jobs.length;
+    if (!jobs.length) return;
+    const labels = {
+      scheduled: "Scheduled", delayed: "Delayed", starting: "Starting", running: "Running",
+      stopping: "Stopping", completed: "Completed", skipped: "Skipped", failed: "Failed",
+      stop_failed: "Stop failed", cancelled: "Cancelled",
+    };
+    const formatter = new Intl.DateTimeFormat(this._hass.language || undefined, {
+      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      timeZone: this._hass.config?.time_zone || undefined,
+    });
+    const primary = new Set(["scheduled", "delayed", "starting", "running", "stopping", "stop_failed"]);
+    const sorted = [...jobs].sort((a, b) => Number(primary.has(b.status)) - Number(primary.has(a.status)) ||
+      (primary.has(a.status) ? (a.actual_start ?? a.start ?? a.deadline) - (b.actual_start ?? b.start ?? b.deadline) :
+        b.created - a.created));
+    const list = this._get("approved-list");
+    list.replaceChildren();
+    for (const job of sorted) {
+      const item = document.createElement("li");
+      item.className = "approved-run";
+      const summary = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = job.name + " · " + (labels[job.status] ?? job.status);
+      const time = document.createElement("small");
+      const when = job.actual_start ?? job.start;
+      time.textContent = when === null ? "" : formatter.format(when * 1000);
+      if (job.stop_at && ["starting", "running", "stopping"].includes(job.status)) {
+        time.textContent += " · " + (job.stop_automation ? "Stop " : "Estimated end ") + formatter.format(job.stop_at * 1000);
+      }
+      const note = document.createElement("small");
+      note.textContent = job.note;
+      summary.append(title, time, note);
+      item.append(summary);
+      if (this._hass.user?.is_admin && ["scheduled", "delayed", "stop_failed"].includes(job.status)) {
+        const action = job.status === "stop_failed" ? "retry_stop" : "cancel";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = action === "cancel" ? "Cancel" : "Retry stop";
+        button.setAttribute("aria-label", button.textContent + " " + job.name);
+        button.addEventListener("click", () => {
+          button.disabled = true;
+          this._changeRun(action, job).finally(() => { button.disabled = false; });
+        });
+        item.append(button);
+      }
+      list.append(item);
+    }
   }
 
   _renderSchedule(workloads, schedule, intervals, battery, timeZone, now) {
@@ -641,8 +914,11 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         item.append(time);
       } else {
         item.dataset.source = "unplaced";
-        detail.textContent = row.problem || (row.duration > last.end - intervals[0].from ?
-          "The forecast is too short for this duration." : "No suitable window found.");
+        const fallback = row.enabled && row.timing === "flexible" && row.policy === "must" && row.deadline !== null;
+        const latest = fallback ? row.deadline - row.duration : null;
+        detail.textContent = row.problem || (fallback ? "No suitable window found. If approved, latest start is " +
+          startLabel(latest) + ", " + clock.format(latest) + "." : row.duration > last.end - intervals[0].from ?
+            "The forecast is too short for this duration." : "No suitable window found.");
       }
       item.append(detail);
       list.append(item);
@@ -682,6 +958,6 @@ if (!customElements.get(cardType)) {
   window.customCards.push({
     type: cardType,
     name: "Deferred Workloads Planner",
-    description: "Find suggested times for workloads using the Energy Manager forecast.",
+    description: "Plan and schedule workloads using the Energy Manager forecast.",
   });
 }
