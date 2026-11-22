@@ -241,7 +241,7 @@ def edit_impact(intervals, job, reserved, capacity, charge_eff, discharge_eff):
 
 def possible_starts(intervals, job, placements=()):
     duration = job["duration"]
-    earliest = intervals[0]["begin"]
+    earliest = max(intervals[0]["begin"], job.get("earliest", intervals[0]["begin"]))
     latest = min(job["deadline"], intervals[-1]["end"]) - duration
     starts = {earliest, latest}
     for row in intervals:
