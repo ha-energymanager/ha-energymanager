@@ -2130,7 +2130,7 @@
   view_layout:
     em_id: em-power-boost
     em_name: Power Boost Toggle
-    em_width: 12
+    em_width: 4
     em_column: 0
     em_order: 20
     em_hidden: true   
