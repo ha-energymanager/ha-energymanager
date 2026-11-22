@@ -1,4 +1,4 @@
-"""Exclude Energy Manager operations from workload automation selection."""
+"""Exclude Energy Manager operations from load automation selection."""
 
 import re
 
