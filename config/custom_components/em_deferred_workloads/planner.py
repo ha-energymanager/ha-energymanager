@@ -126,12 +126,13 @@ def add_cost(total, energy, rate):
     return None if total is None or rate is None else total + energy * rate
 
 
-def replay(intervals, jobs, capacity, charge_eff, discharge_eff):
+def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None):
     """Apply the card's battery, reserve, tariff and import-limit model."""
     ordered = sorted(jobs, key=lambda job: (not job.get("reserved", False),
                                             SOURCES.index(job["source"]), job["id"]))
     deficit = protected = grid = solar = 0
     grid_cost = export_cost = 0
+    mix = dict(solar=0, diverted=0, battery=0, grid=0) if report_job is not None else None
     for row in intervals:
         end, begin = row["end"], row["begin"]
         active = [job for job in ordered if job["start"] < end and job["end"] > begin]
@@ -180,6 +181,11 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff):
                     return None
                 if stored > EPS:
                     deficit += stored / discharge_eff
+                if mix is not None and job["id"] == report_job:
+                    mix["solar"] += direct
+                    mix["diverted"] += diverted
+                    mix["battery"] += stored
+                    mix["grid"] += imported
                 solar += direct + diverted
                 extra_grid += imported
                 export += direct
@@ -205,7 +211,31 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff):
             grid += extra_grid
             grid_cost = add_cost(grid_cost, extra_grid, row["buy"])
             export_cost = add_cost(export_cost, export, row["sell"])
-    return None if grid_cost is None or export_cost is None else grid_cost + export_cost, grid, deficit, -solar
+    total_cost = None if grid_cost is None or export_cost is None else grid_cost + export_cost
+    if mix is not None:
+        return dict(mix=mix, total_cost=total_cost, grid_cost=grid_cost, export_cost=export_cost,
+                    grid=grid, deficit=deficit)
+    return total_cost, grid, deficit, -solar
+
+
+def edit_impact(intervals, job, reserved, capacity, charge_eff, discharge_eff):
+    start = job["start"]
+    end = start + job["duration"]
+    window = dict(job, end=end)
+    if (not intervals or start < intervals[0]["begin"] or end > intervals[-1]["end"]
+            or overlaps(window, reserved)):
+        return None
+    args = capacity, charge_eff, discharge_eff
+    baseline = replay(intervals, reserved, *args, report_job=job["id"])
+    scenario = replay(intervals, [*reserved, window], *args, report_job=job["id"])
+    if baseline is None or scenario is None:
+        return None
+    mix = scenario.pop("mix")
+    changes = {key: scenario[key] - baseline[key] if None not in (scenario[key], baseline[key]) else None
+               for key in scenario}
+    if not capacity:
+        changes["deficit"] = None
+    return dict(mix=mix, **changes)
 
 
 def possible_starts(intervals, job, placements=()):
