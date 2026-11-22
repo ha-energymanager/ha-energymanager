@@ -8,7 +8,6 @@ template:
       soc_entity: sensor.inverter_battery_level
       window_start: "00:00:00"
       window_end: "23:59:00"
-      # Optional percentages.
       target_soc_pct: input_number.inverter_max_soc
       reserve_soc_pct: sensor.inverter_min_soc
       plan_max_age_minutes: 20
@@ -28,100 +27,126 @@ template:
             {% set start = as_timestamp(today_at(window_start)) %}
             {% set end = as_timestamp(today_at(window_end)) %}
             {% set date = time.date().isoformat() %}
+            {% set yesterday = (time - timedelta(days=1)).date().isoformat() %}
+            {% set unit = state_attr(export_entity, 'unit_of_measurement') %}
+            {% set raw_meter = states(export_entity) | float(none) %}
+            {% set meter = raw_meter / (1000 if unit == 'Wh' else 1)
+               if raw_meter is not none and raw_meter >= 0 and unit in ['kWh', 'Wh'] else none %}
+            {% set soc = states(soc_entity) | float(none) %}
+            {% set soc = soc if soc is not none and 0 <= soc <= 100 else none %}
             {% if end <= start %}
-              {{ dict(active=none, latest=latest, issue='Set an end time later than the start time on the same day.') }}
-            {% elif ts == start and (active is not mapping or active.get('date') != date) %}
-              {% set plan = state_attr(plan_entity, 'energy_plan') %}
-              {% set rows = plan.get('timeline', []) if plan is mapping and has_value(plan_entity) else [] %}
-              {% set generated = as_timestamp(plan.get('meta', {}).get('generated_at'), none)
-                 if plan is mapping else none %}
-              {% set reserve = reserve_soc_pct | float(none) %}
-              {% set target = target_soc_pct | float(none) %}
-              {% set reserve = reserve if reserve is not none and 0 <= reserve <= 100 else none %}
-              {% set target = target if target is not none and 0 <= target <= 100 else none %}
-              {% set expected = namespace(cursor=start, export=0, first_reserve=none, soc_available=true, valid=true) %}
-              {% if generated is not none and 0 <= start - generated <= plan_max_age_minutes * 60 %}
-                {% for row in rows if row is mapping %}
-                  {% set begins = as_timestamp(row.get('ts'), none) %}
-                  {% set minutes = row.get('interval_minutes') | float(0) %}
-                  {% if begins is not none and minutes > 0 %}
-                    {% set finishes = begins + minutes * 60 %}
-                    {% set left = [begins, start] | max %}
-                    {% set right = [finishes, end] | min %}
-                    {% if right > left %}
-                      {% set result = row.get('expected', {}) %}
-                      {% set kw = result.get('grid_export_kw') | float(none) %}
-                      {% if left != expected.cursor or kw is none or kw < 0 %}
-                        {% set expected.valid = false %}
-                      {% endif %}
-                      {% if expected.valid %}
-                        {% set expected.export = expected.export + kw * (right - left) / 3600 %}
-                        {% set expected.cursor = right %}
-                        {% set soc_start = row.get('inputs', {}).get('soc_pct_start') | float(none) %}
-                        {% set soc_end = result.get('soc_pct_end') | float(none) %}
-                        {% if reserve is not none and expected.first_reserve is none %}
-                          {% if soc_start is none or soc_end is none or not (0 <= soc_start <= 100 and 0 <= soc_end <= 100) %}
-                            {% set expected.soc_available = false %}
-                          {% elif expected.soc_available %}
-                            {% set soc_left = soc_start + (soc_end - soc_start) * (left - begins) / (finishes - begins) %}
-                            {% set soc_right = soc_start + (soc_end - soc_start) * (right - begins) / (finishes - begins) %}
-                            {% if soc_left <= reserve %}
-                              {% set expected.first_reserve = dict(start=left, end=left) %}
-                            {% elif soc_right <= reserve %}
-                              {% set expected.first_reserve = dict(start=left, end=right) %}
+              {{ dict(active=active, latest=latest, issue='Set an end time later than the start time on the same day.') }}
+            {% else %}
+              {% if active is mapping and active.get('date') != date %}
+                {% if active.get('date') == yesterday %}
+                  {% set within_close = ts <= active.end + 60 %}
+                  {% set close_meter = meter if within_close and meter is not none else active.get('meter_end') %}
+                  {% set close_time = ts if within_close and meter is not none else active.get('observed_until') %}
+                  {% set close_ok = active.get('meter_ok') and close_meter is not none
+                     and active.get('meter_start') is not none and active.get('meter_previous') is not none
+                     and close_meter >= active.meter_previous and close_time is not none
+                     and close_time >= active.end %}
+                  {% set latest = dict(active, segments=none, window_complete=close_ok,
+                     observed_until=close_time, expected_export_kwh=active.get('expected_total_export_kwh'),
+                     observed_export_kwh=close_meter - active.meter_start if close_ok else none,
+                     close_approximate=close_ok and close_time > active.end,
+                     meter_ok=close_ok) %}
+                {% endif %}
+                {% set active = none %}
+              {% endif %}
+              {% if active is not mapping and ts == start %}
+                {% set plan = state_attr(plan_entity, 'energy_plan') %}
+                {% set rows = plan.get('timeline', []) if plan is mapping and has_value(plan_entity) else [] %}
+                {% set meta = plan.get('meta', {}) if plan is mapping else {} %}
+                {% set generated = as_timestamp(meta.get('generated_at'), none) if meta is mapping else none %}
+                {% set reserve = states(reserve_soc_pct) | float(none) %}
+                {% set target = states(target_soc_pct) | float(none) %}
+                {% set reserve = reserve if reserve is not none and 0 <= reserve <= 100 else none %}
+                {% set target = target if target is not none and 0 <= target <= 100 else none %}
+                {% set expected = namespace(cursor=start, export=0, segments=[], first_reserve=none,
+                   soc_available=true, valid=true) %}
+                {% if generated is not none and 0 <= start - generated <= plan_max_age_minutes * 60 %}
+                  {% for row in rows if row is mapping %}
+                    {% set begins = as_timestamp(row.get('ts'), none) %}
+                    {% set minutes = row.get('interval_minutes') | float(0) %}
+                    {% if begins is not none and minutes > 0 %}
+                      {% set finishes = begins + minutes * 60 %}
+                      {% set left = [begins, start] | max %}
+                      {% set right = [finishes, end] | min %}
+                      {% if right > left %}
+                        {% set result = row.get('expected', {}) %}
+                        {% set result = result if result is mapping else {} %}
+                        {% set kw = result.get('grid_export_kw') | float(none) %}
+                        {% if left != expected.cursor or kw is none or kw < 0 %}
+                          {% set expected.valid = false %}
+                        {% endif %}
+                        {% if expected.valid %}
+                          {% set expected.segments = expected.segments + [[left, right, kw]] %}
+                          {% set expected.export = expected.export + kw * (right - left) / 3600 %}
+                          {% set expected.cursor = right %}
+                          {% set input = row.get('inputs', {}) %}
+                          {% set input = input if input is mapping else {} %}
+                          {% set soc_start = input.get('soc_pct_start') | float(none) %}
+                          {% set soc_end = result.get('soc_pct_end') | float(none) %}
+                          {% if reserve is not none and expected.first_reserve is none %}
+                            {% if soc_start is none or soc_end is none or not (0 <= soc_start <= 100 and 0 <= soc_end <= 100) %}
+                              {% set expected.soc_available = false %}
+                            {% elif expected.soc_available %}
+                              {% set soc_left = soc_start + (soc_end - soc_start) * (left - begins) / (finishes - begins) %}
+                              {% set soc_right = soc_start + (soc_end - soc_start) * (right - begins) / (finishes - begins) %}
+                              {% if soc_left <= reserve %}
+                                {% set expected.first_reserve = dict(start=left, end=left) %}
+                              {% elif soc_right <= reserve %}
+                                {% set expected.first_reserve = dict(start=left, end=right) %}
+                              {% endif %}
                             {% endif %}
                           {% endif %}
                         {% endif %}
                       {% endif %}
                     {% endif %}
-                  {% endif %}
-                {% endfor %}
-              {% endif %}
-              {% set plan_ok = expected.valid and expected.cursor == end %}
-              {% set unit = state_attr(export_entity, 'unit_of_measurement') %}
-              {% set meter = states(export_entity) | float(none) %}
-              {% set meter = meter / (1000 if unit == 'Wh' else 1)
-                 if meter is not none and meter >= 0 and unit in ['kWh', 'Wh'] else none %}
-              {% set soc = states(soc_entity) | float(none) %}
-              {% set soc = soc if soc is not none and 0 <= soc <= 100 else none %}
-              {% set hit = reserve is not none and soc is not none and soc <= reserve %}
-              {{ dict(latest=latest, active=dict(
-                  date=date, start=start, end=end, sampled_at=ts,
-                  expected_export_kwh=expected.export if plan_ok else none,
-                  plan_generated_at=generated if plan_ok else none,
-                  planned_reserve=expected.first_reserve if plan_ok else none,
-                  planned_reserve_known=plan_ok and expected.soc_available,
-                  target_soc_pct=target, reserve_soc_pct=reserve, opening_soc_pct=soc,
-                  meter_start=meter, meter_previous=meter, meter_ok=meter is not none,
-                  reserve_observed_at=ts if hit else none, soc_has_gap=soc is none)) }}
-            {% elif active is mapping and ts > active.sampled_at %}
-              {% if ts > active.end %}
-                {{ dict(active=none, latest=dict(active, observed_export_kwh=none, window_complete=false)) }}
-              {% else %}
-                {% set unit = state_attr(export_entity, 'unit_of_measurement') %}
-                {% set meter = states(export_entity) | float(none) %}
-                {% set meter = meter / (1000 if unit == 'Wh' else 1)
-                   if meter is not none and meter >= 0 and unit in ['kWh', 'Wh'] else none %}
-                {% set soc = states(soc_entity) | float(none) %}
-                {% set soc = soc if soc is not none and 0 <= soc <= 100 else none %}
-                {% set missed_sample = ts - active.sampled_at > 60 %}
-                {% set meter_ok = active.meter_ok and not missed_sample and meter is not none
-                   and active.meter_previous is not none and meter >= active.meter_previous %}
+                  {% endfor %}
+                {% endif %}
+                {% set plan_ok = expected.valid and expected.cursor == end %}
+                {% set active = dict(date=date, start=start, end=end, sampled_at=ts,
+                   observed_until=ts, segments=expected.segments if plan_ok else none,
+                   expected_export_kwh=0 if plan_ok else none,
+                   expected_total_export_kwh=expected.export if plan_ok else none,
+                   plan_generated_at=generated if plan_ok else none,
+                   planned_reserve=expected.first_reserve if plan_ok else none,
+                   planned_reserve_known=plan_ok and expected.soc_available,
+                   target_soc_pct=target, reserve_soc_pct=reserve, opening_soc_pct=soc,
+                   meter_start=meter, meter_previous=meter, meter_end=meter,
+                   meter_ok=meter is not none, observed_export_kwh=0 if meter is not none else none,
+                   reserve_observed_at=ts if reserve is not none and soc is not none and soc <= reserve else none,
+                   soc_has_gap=soc is none, window_complete=false) %}
+              {% elif active is mapping and ts > active.sampled_at %}
+                {% set meter_ok = active.meter_ok and (meter is none or
+                   active.meter_previous is none or meter >= active.meter_previous) %}
+                {% set observed_until = ts if meter is not none else active.observed_until %}
+                {% set meter_end = meter if meter is not none else active.meter_end %}
+                {% set previous = meter if meter is not none else active.meter_previous %}
                 {% set reserve_time = active.reserve_observed_at %}
+                {% set missed_sample = ts - active.sampled_at > 60 %}
                 {% set soc_gap = active.soc_has_gap or (reserve_time is none and (missed_sample or soc is none)) %}
                 {% if reserve_time is none and active.reserve_soc_pct is not none
                       and soc is not none and soc <= active.reserve_soc_pct %}
                   {% set reserve_time = ts %}
                 {% endif %}
-                {% set updated = dict(active, sampled_at=ts, meter_previous=meter,
-                   meter_ok=meter_ok, reserve_observed_at=reserve_time, soc_has_gap=soc_gap) %}
-                {% if ts == active.end %}
-                  {{ dict(active=none, latest=dict(updated, window_complete=true,
-                      observed_export_kwh=meter - active.meter_start if meter_ok else none)) }}
-                {% else %}
-                  {{ dict(active=updated, latest=latest) }}
+                {% set elapsed = [observed_until, active.end] | min %}
+                {% set planned = namespace(value=0) %}
+                {% if active.segments is sequence %}
+                  {% for segment in active.segments %}
+                    {% set duration = [[elapsed, segment[1]] | min - segment[0], 0] | max %}
+                    {% set planned.value = planned.value + segment[2] * duration / 3600 %}
+                  {% endfor %}
                 {% endif %}
+                {% set active = dict(active, sampled_at=ts, observed_until=observed_until,
+                   meter_previous=previous, meter_end=meter_end, meter_ok=meter_ok,
+                   observed_export_kwh=meter_end - active.meter_start
+                     if meter_ok and meter_end is not none and active.meter_start is not none else none,
+                   expected_export_kwh=planned.value if active.segments is sequence else none,
+                   reserve_observed_at=reserve_time, soc_has_gap=soc_gap,
+                   window_complete=ts >= active.end) %}
               {% endif %}
-            {% else %}
               {{ dict(active=active, latest=latest) }}
             {% endif %}
