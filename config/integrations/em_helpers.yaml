@@ -392,6 +392,10 @@ input_boolean:
   battery_2_enabled:
     name: Enable Battery 2
     icon: mdi:battery-plus-outline
+
+  boost_enabled:
+    name: Power Boost
+    icon: mdi:rocket-launch
   
   demand_period_enabled:
     name: Demand Period Enabled
