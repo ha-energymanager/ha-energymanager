@@ -25,6 +25,7 @@
 * Two new entities to track system purchase cost
 * Extra entity to track second purchase date
 * Net_monthly cost and profit entities
+* Additional battery support, for second inverter with a battery connected
 #### Changed
 * Removed Goodwe firmware update from being queried as it is not consistently supported over model type
 * Moved Update Available markdown card to be directly under Update Result entity card
