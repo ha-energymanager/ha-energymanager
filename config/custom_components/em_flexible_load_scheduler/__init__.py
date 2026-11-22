@@ -296,6 +296,8 @@ class Scheduler:
             active_count = len(repeats) + sum(job["status"] in ACTIVE and job.get("repeat_id") not in repeats
                                               for job in jobs.values())
             ids = []
+            proposed = []
+            reserved = self.approved_windows(self.jobs)
             for item in requested:
                 name = item["name"]
                 try:
@@ -317,8 +319,24 @@ class Scheduler:
                     active_count += 1
                     continue
 
-                jobs[item["id"]] = self.build_pending_run(item, jobs, now, now)
+                job = self.build_pending_run(item, jobs, now, now)
+                jobs[item["id"]] = job
+                if item.get("start") is not None:
+                    proposed.append(dict(job, end=job["start"] + job["duration"]))
+                elif job["start"] is not None:
+                    reserved.append(self.reservation(job))
                 active_count += 1
+            if proposed:
+                earliest = min(ceil(now / 60) * 60, min(job["start"] for job in proposed))
+                intervals, capacity = self.forecast(earliest, now)
+                args = capacity, self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"]
+                covered = intervals and all(intervals[0]["begin"] <= job["start"]
+                                            and job["end"] <= intervals[-1]["end"] for job in proposed)
+                result = await self.hass.async_add_executor_job(
+                    replay, intervals, [*reserved, *proposed], *args,
+                ) if covered else None
+                if result is None:
+                    raise vol.Invalid("The forecast or approved runs no longer support this schedule. Review the suggested times.")
             self.create_daily_runs(jobs, repeats, now)
             await self.commit(jobs, repeats)
             self.wake.set()
@@ -351,9 +369,7 @@ class Scheduler:
             start = deadline - duration
         if start is not None:
             window = dict(item, start=start, end=start + duration)
-            existing = [self.reservation(job) for job in jobs.values()
-                        if job["status"] in ACTIVE and job["start"] is not None]
-            if overlaps(window, existing):
+            if overlaps(window, self.approved_windows(jobs)):
                 raise vol.Invalid(f"{name} overlaps another approved run using the same automation.")
         return dict(
             item, approval=dict(item), created=created, start=start, stop_at=None,
@@ -379,8 +395,7 @@ class Scheduler:
 
     async def plan_edit(self, item, now):
         intervals, capacity = self.forecast(ceil((now + 1) / 60) * 60, now)
-        reserved = [self.reservation(job) for job in self.jobs.values()
-                    if job["id"] != item["id"] and job["status"] in ACTIVE and job["start"] is not None]
+        reserved = self.approved_windows(self.jobs, item["id"])
         args = capacity, self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"]
         starts = await self.hass.async_add_executor_job(
             recommend, intervals, [item], reserved, *args,
@@ -588,7 +603,12 @@ class Scheduler:
         end = job["stop_at"] if job["stop_at"] is not None else start + job["duration"]
         if job["status"] in ("stopping", "stop_failed") or (job["status"] == "running" and end <= time()):
             end = max(end, time() + 60)
-        return dict(job, start=start, end=end, source="grid", reserved=True)
+        return dict(job, start=start, end=end, source="priority" if job["source"] == "priority" else "grid",
+                    reserved=True)
+
+    def approved_windows(self, jobs, excluded_id=None):
+        return [self.reservation(job) for job in jobs.values()
+                if job["id"] != excluded_id and job["status"] in ACTIVE and job["start"] is not None]
 
     async def run(self):
         while True:
