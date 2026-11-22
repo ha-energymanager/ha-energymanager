@@ -85,7 +85,7 @@ async def async_setup(hass, config):
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
-    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_edit, ws_edit_preview):
+    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_clear_completed, ws_edit, ws_edit_preview):
         websocket_api.async_register_command(hass, command)
     if hass.is_running:
         scheduler.start(None)
@@ -152,7 +152,15 @@ async def ws_unskip(hass, connection, msg):
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_clear_cancelled(hass, connection, msg):
-    count = await hass.data[DOMAIN].clear_cancelled()
+    count = await hass.data[DOMAIN].clear_history("cancelled")
+    connection.send_result(msg["id"], {"count": count})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/clear_completed"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_clear_completed(hass, connection, msg):
+    count = await hass.data[DOMAIN].clear_history("completed")
     connection.send_result(msg["id"], {"count": count})
 
 
@@ -240,6 +248,7 @@ class Scheduler:
             "automation_exclusions": AUTOMATION_EXCLUSIONS,
             "supports_edit": True,
             "supports_edit_preview": True,
+            "supports_clear_completed": True,
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -475,9 +484,9 @@ class Scheduler:
             await self.commit(jobs)
             self.wake.set()
 
-    async def clear_cancelled(self):
+    async def clear_history(self, status):
         async with self.lock:
-            jobs = {job_id: job for job_id, job in self.jobs.items() if job["status"] != "cancelled"}
+            jobs = {job_id: job for job_id, job in self.jobs.items() if job["status"] != status}
             removed = len(self.jobs) - len(jobs)
             await self.commit(jobs)
             return removed
