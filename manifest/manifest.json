@@ -217,6 +217,12 @@
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
+    "dashboards/energy_manager_deferred.yaml": {
+      "action": "replace",
+      "description": "Deferred Loads Dashboard",
+      "backup_current": true,
+      "new_in_version": "2.1.0"
+    }, 
     "dashboards/energy_manager_cards.yaml": {
       "action": "replace",
       "description": "Shared Overview and Inverter card catalogue",
