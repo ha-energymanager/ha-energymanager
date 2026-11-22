@@ -2,7 +2,7 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime, time as clock_time, timedelta
+from datetime import UTC, date, datetime, time as clock_time, timedelta
 from hashlib import sha256
 import json
 import logging
@@ -52,9 +52,13 @@ APPROVAL = {
     vol.Required("duration"): vol.All(int, vol.Range(min=60, max=86400)),
     vol.Required("source"): vol.In(SOURCES),
     vol.Required("timing"): vol.In(("fixed", "flexible")),
-    vol.Required("policy"): vol.In(("must", "defer")),
+    vol.Required("policy"): vol.In(("must", "defer", "search")),
     vol.Optional("start"): vol.Any(int, None),
     vol.Optional("deadline"): int,
+    vol.Optional("search"): {
+        vol.Required("finish_by"): str,
+        vol.Required("days"): vol.In((3, 7, None)),
+    },
     vol.Optional("repeat"): {
         vol.Required("days"): vol.All([vol.In(range(7))], vol.Length(min=1, max=7)),
         vol.Required("finish_by"): str,
@@ -250,6 +254,7 @@ class Scheduler:
             "supports_edit_preview": True,
             "supports_clear_completed": True,
             "supports_forecast_repeats": True,
+            "supports_future_day_search": True,
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -344,6 +349,17 @@ class Scheduler:
 
     def validate_load(self, item):
         name = item["name"]
+        search = item.get("search")
+        if item["policy"] == "search":
+            if search is None or item["timing"] != "flexible" or "repeat" in item:
+                raise vol.Invalid("Future-day search requires a flexible, one-off load.")
+            finish = read_clock(search["finish_by"])
+            if finish is None or finish * 60 < item["duration"]:
+                raise vol.Invalid("Choose a daily finish time that leaves enough time to run.")
+            if item.get("start") is not None or "deadline" in item:
+                raise vol.Invalid("A future-day search uses a daily finish time.")
+        elif search is not None:
+            raise vol.Invalid("Choose Keep looking on future days to set a search period.")
         if item["duration"] % 60:
             raise vol.Invalid(f"{name} needs a whole-minute duration.")
         if not self.automation_selectable(item["start_automation"]):
@@ -357,8 +373,40 @@ class Scheduler:
         if deadline is None or not now < deadline <= now + 172800 or deadline - item["duration"] <= now:
             raise vol.Invalid(f"{item['name']} needs a future finish time with enough time to run.")
 
-    def build_pending_run(self, item, jobs, now, created):
-        self.validate_deadline(item, now)
+    def search_window(self, job, now):
+        zone = self.schedule_zone()
+        today = datetime.fromtimestamp(now, zone).date()
+        day = today
+        last_day = None
+        if job.get("search_from"):
+            first_day = date.fromisoformat(job["search_from"])
+            day = max(today, first_day)
+            days = job["search"]["days"]
+            if days is not None:
+                last_day = first_day + timedelta(days=days - 1)
+        while last_day is None or day <= last_day:
+            earliest = datetime.combine(day, clock_time.min, zone).timestamp()
+            deadline = local_timestamp(day, job["search"]["finish_by"], zone)
+            if deadline is not None and deadline - job["duration"] >= max(now, earliest):
+                return day.isoformat(), int(earliest), int(deadline)
+            day += timedelta(days=1)
+        return None
+
+    def prepare_search(self, item, now, original=None):
+        search_from = original.get("search_from") if original else None
+        job = dict(item, search_from=search_from)
+        window = self.search_window(job, now)
+        if window is None:
+            raise vol.Invalid("The search period has ended. Choose a longer search period.")
+        day, earliest, deadline = window
+        return dict(job, search_from=search_from or day, earliest=earliest, deadline=deadline)
+
+    def build_pending_run(self, item, jobs, now, created, original=None):
+        approval = dict(item)
+        if item["policy"] == "search":
+            item = self.prepare_search(item, now, original)
+        else:
+            self.validate_deadline(item, now)
         name = item["name"]
         start, deadline, duration = item.get("start"), item["deadline"], item["duration"]
         if start is None and item["timing"] != "flexible":
@@ -372,7 +420,7 @@ class Scheduler:
             if overlaps(window, self.approved_windows(jobs)):
                 raise vol.Invalid(f"{name} overlaps another approved run using the same automation.")
         return dict(
-            item, approval=dict(item), created=created, start=start, stop_at=None,
+            item, approval=approval, created=created, start=start, stop_at=None,
             actual_start=None, status="scheduled" if item.get("start") is not None else "delayed",
             note="", start_failed=False,
         )
@@ -384,6 +432,10 @@ class Scheduler:
         if "repeat" in item:
             raise vol.Invalid("Edit changes one run at a time.")
         self.validate_load(item)
+        if item["policy"] == "search":
+            if original.get("repeat_id"):
+                raise vol.Invalid("Future-day search requires a flexible, one-off load.")
+            return original
         self.validate_deadline(item, now)
         zone = self.schedule_zone()
         run_date = datetime.fromtimestamp(original["deadline"], zone).date()
@@ -418,7 +470,7 @@ class Scheduler:
 
         end = None if start is None else start + job["duration"]
         impact = None
-        outcome = "no_window" if intervals else "no_forecast"
+        outcome = "searching" if job["policy"] == "search" else "no_window" if intervals else "no_forecast"
         if start is not None:
             window = dict(job, start=start, end=end)
             if overlaps(window, reserved):
@@ -444,16 +496,17 @@ class Scheduler:
 
         return dict(start=start, end=end, deadline=job["deadline"], power=job["power"],
                     duration=job["duration"], source=job["source"], timing=job["timing"],
-                    policy=job["policy"], outcome=outcome, impact=impact)
+                    policy=job["policy"], search=job.get("search"), outcome=outcome, impact=impact)
 
     async def make_edit_preview(self, item, original, now):
         intervals, reserved, args = self.edit_forecast(item, now)
-        changed = any(item[key] != original[key] for key in (
-            "name", "power", "duration", "deadline", "source", "timing", "policy",
+        changed = any(item.get(key) != original.get(key) for key in (
+            "name", "power", "duration", "source", "timing", "policy", "search",
             "start_automation", "stop_automation",
-        ))
+        )) or (item["policy"] != "search" and item["deadline"] != original["deadline"])
         current = await self.estimate_edit_schedule(original, intervals, reserved, args, saved=True)
-        proposed = await self.estimate_edit_schedule(item, intervals, reserved, args) if changed else current
+        draft = self.prepare_search(item, now, original) if changed and item["policy"] == "search" else item
+        proposed = await self.estimate_edit_schedule(draft, intervals, reserved, args) if changed else current
 
         message = ""
         if proposed["outcome"] == "conflict":
@@ -462,6 +515,8 @@ class Scheduler:
             message = "An up-to-date energy forecast is needed to estimate the impact."
         elif proposed["start"] is None and item["timing"] == "fixed":
             message = "Fixed needs a start time that fits the selected power source before the finish time."
+        elif proposed["outcome"] == "searching":
+            message = "No suitable time yet. The scheduler will keep looking within the search period."
         elif proposed["start"] is None:
             message = "No time in the forecast fits these settings. The load may be skipped."
 
@@ -500,7 +555,7 @@ class Scheduler:
             jobs = deepcopy(self.jobs)
             del jobs[item["id"]]
             item = dict(item, start=planned_start if item["timing"] == "fixed" else None)
-            replacement = self.build_pending_run(item, jobs, time(), original["created"])
+            replacement = self.build_pending_run(item, jobs, time(), original["created"], original)
             if original.get("repeat_id"):
                 replacement.update(repeat_id=original["repeat_id"], run_date=original["run_date"])
             jobs[item["id"]] = replacement
@@ -718,6 +773,20 @@ class Scheduler:
         self.hass.async_create_background_task(self.trigger(job_id, phase), f"{DOMAIN} {phase} {job_id}")
 
     async def plan_pending(self, jobs, pending, now, dispatch, remaining):
+        for job in pending:
+            if job["policy"] != "search":
+                continue
+            start = job["start"]
+            search_now = start if start is not None and 0 <= now - start <= 10 else now
+            window = self.search_window(job, search_now)
+            if window is None:
+                job.update(status="skipped", start=None, note="No suitable time was found before the search period ended.")
+            else:
+                _, earliest, deadline = window
+                if deadline != job["deadline"]:
+                    job["start"] = None
+                job.update(earliest=earliest, deadline=deadline)
+        pending = [job for job in pending if job["status"] in PENDING]
         fixed = [job for job in pending if job["timing"] == "fixed" and job["approval"]["start"] is not None]
         unplanned = [job for job in pending if job["timing"] == "flexible" or job["approval"]["start"] is None]
         active = [self.reservation(job) for job in jobs.values()
@@ -781,7 +850,11 @@ class Scheduler:
                     reserved.append(self.reservation(job))
                     continue
                 start = None
-            if now >= latest:
+            if job["policy"] == "search":
+                job.update(start=start, status="scheduled" if start is not None else "delayed",
+                           note="" if start is not None else "Waiting for a suitable time.")
+                remaining.append(start if start is not None else max(now, latest) + 1)
+            elif now >= latest:
                 job.update(status="skipped", note="No suitable window was available by the deadline.")
             elif start is not None:
                 original = job["approval"]["start"]
