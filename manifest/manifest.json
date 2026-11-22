@@ -217,9 +217,9 @@
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
-    "dashboards/energy_manager_deferred.yaml": {
+    "dashboards/energy_manager_scheduler.yaml": {
       "action": "replace",
-      "description": "Deferred Loads Dashboard",
+      "description": "Flexible Load Scheduler Dashboard",
       "backup_current": true,
       "new_in_version": "2.1.0"
     }, 
@@ -674,23 +674,23 @@
     },
     "custom_components/em_flexible_load_scheduler/__init__.py": {
       "action": "replace",
-      "description": "Deferred Worksloads Planner Component",
+      "description": "Flexible Load Scheduler Component",
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
     "custom_components/em_flexible_load_scheduler/planner.py": {
       "action": "replace",
-      "description": "Deferred Worksloads Planner",
+      "description": "Flexible Load Planner",
       "new_in_version": "2.1.0"
     },
     "custom_components/em_flexible_load_scheduler/automation_filter.py": {
       "action": "replace",
-      "description": "Deferred Worksloads Automation Filter",
+      "description": "Flexible Load Scheduler Automation Filter",
       "new_in_version": "2.1.0"
     },    
     "custom_components/em_flexible_load_scheduler/manifest.json": {
       "action": "replace",
-      "description": "Manifest for Deferred Worksloads Planner Component",
+      "description": "Manifest for Flexible Load Scheduler Component",
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
