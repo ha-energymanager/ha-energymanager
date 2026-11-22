@@ -1,0 +1,3 @@
+# energy_manager_scheduler.yaml  v2.1.0
+views:
+  - type: custom:em-flexible-load-scheduler-card
