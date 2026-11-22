@@ -3,6 +3,8 @@
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime, time as clock_time, timedelta
+from hashlib import sha256
+import json
 import logging
 from math import ceil
 import re
@@ -21,7 +23,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time, async_tra
 from homeassistant.helpers.storage import Store
 
 from .automation_filter import AUTOMATION_EXCLUSIONS, excluded
-from .planner import SOURCES, nonnegative, overlaps, read_forecast, recommend, replay
+from .planner import SOURCES, edit_impact, nonnegative, overlaps, read_forecast, recommend, replay
 
 DOMAIN = "em_deferred_workloads"
 LOGGER = logging.getLogger(__name__)
@@ -83,7 +85,7 @@ async def async_setup(hass, config):
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
-    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_edit):
+    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_edit, ws_edit_preview):
         websocket_api.async_register_command(hass, command)
     if hass.is_running:
         scheduler.start(None)
@@ -157,12 +159,24 @@ async def ws_clear_cancelled(hass, connection, msg):
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/edit",
     vol.Required("job"): APPROVAL,
+    vol.Optional("review"): str,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_edit(hass, connection, msg):
-    await hass.data[DOMAIN].edit(msg["job"])
+    await hass.data[DOMAIN].edit(msg["job"], msg.get("review"))
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/edit_preview",
+    vol.Required("job"): APPROVAL,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_edit_preview(hass, connection, msg):
+    preview = await hass.data[DOMAIN].edit_preview(msg["job"])
+    connection.send_result(msg["id"], preview)
 
 
 class Scheduler:
@@ -225,6 +239,7 @@ class Scheduler:
             "jobs": [dict(job, unskip_until=self.unskip_until(job, self.repeats, now)) for job in jobs],
             "automation_exclusions": AUTOMATION_EXCLUSIONS,
             "supports_edit": True,
+            "supports_edit_preview": True,
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -336,45 +351,92 @@ class Scheduler:
             note="", start_failed=False,
         )
 
-    async def edit(self, item):
-        async with self.lock:
-            job_id = item["id"]
-            original = self.jobs.get(job_id)
-            if original is None or original["status"] not in PENDING:
-                raise vol.Invalid("Only a scheduled or delayed run can be edited.")
-            if "repeat" in item:
-                raise vol.Invalid("Edit changes one run at a time.")
-            self.validate_workload(item)
-            now = time()
-            self.validate_deadline(item, now)
-            zone = self.schedule_zone()
-            run_date = datetime.fromtimestamp(original["deadline"], zone).date()
-            if datetime.fromtimestamp(item["deadline"], zone).date() != run_date:
-                raise vol.Invalid("The edited finish time must be on the original finish date.")
-            if original.get("repeat_id") and datetime.fromtimestamp(now, zone).date().isoformat() != original["run_date"]:
-                raise vol.Invalid("The edited occurrence must fit on its original day.")
+    def validate_edit(self, item, now):
+        original = self.jobs.get(item["id"])
+        if original is None or original["status"] not in PENDING:
+            raise vol.Invalid("Only a scheduled or delayed run can be edited.")
+        if "repeat" in item:
+            raise vol.Invalid("Edit changes one run at a time.")
+        self.validate_workload(item)
+        self.validate_deadline(item, now)
+        zone = self.schedule_zone()
+        run_date = datetime.fromtimestamp(original["deadline"], zone).date()
+        if datetime.fromtimestamp(item["deadline"], zone).date() != run_date:
+            raise vol.Invalid("The edited finish time must be on the original finish date.")
+        if original.get("repeat_id") and datetime.fromtimestamp(now, zone).date().isoformat() != original["run_date"]:
+            raise vol.Invalid("The edited occurrence must fit on its original day.")
+        return original
 
-            jobs = deepcopy(self.jobs)
-            del jobs[job_id]
-            item = dict(item, start=None)
-            if item["timing"] == "fixed":
-                intervals, capacity = self.forecast(ceil((now + 1) / 60) * 60, now)
+    async def plan_edit(self, item, now):
+        intervals, capacity = self.forecast(ceil((now + 1) / 60) * 60, now)
+        reserved = [self.reservation(job) for job in self.jobs.values()
+                    if job["id"] != item["id"] and job["status"] in ACTIVE and job["start"] is not None]
+        args = capacity, self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"]
+        starts = await self.hass.async_add_executor_job(
+            recommend, intervals, [item], reserved, *args,
+        ) if intervals else {}
+        start = starts.get(item["id"])
+        return (ceil(start) if start is not None else None), intervals, reserved, args
+
+    async def make_edit_preview(self, item, original, now):
+        start, intervals, reserved, args = await self.plan_edit(item, now)
+        fixed = item["timing"] == "fixed"
+        fallback = start is None and not fixed and item["policy"] == "must"
+        if fallback:
+            start = item["deadline"] - item["duration"]
+
+        async def summary(job, start, source):
+            impact = await self.hass.async_add_executor_job(
+                edit_impact, intervals, dict(job, start=start, source=source), reserved, *args,
+            ) if intervals and start is not None else None
+            return dict(start=start, end=None if start is None else start + job["duration"],
+                        deadline=job["deadline"], impact=impact)
+
+        current = await summary(original, original["start"], original["source"])
+        proposed = await summary(item, start, "grid" if fallback else item["source"])
+        message = ""
+        if not intervals:
+            message = "An up-to-date energy forecast is needed to estimate the impact."
+        elif fallback:
+            message = "No suitable forecast window. Must run can use grid power at the latest start."
+        elif start is None:
+            message = "No available window fits before the finish time with these settings."
+        preview = dict(current=current, proposed=proposed, message=message, can_save=not fixed or start is not None)
+        preview["review"] = sha256(json.dumps([item, preview], sort_keys=True).encode()).hexdigest()
+        return preview
+
+    async def edit_preview(self, item):
+        async with self.lock:
+            now = time()
+            original = self.validate_edit(item, now)
+            return await self.make_edit_preview(item, original, now)
+
+    async def edit(self, item, review=None):
+        async with self.lock:
+            now = time()
+            original = self.validate_edit(item, now)
+            planned_start = None
+            if review is not None:
+                preview = await self.make_edit_preview(item, original, now)
+                if preview["review"] != review:
+                    raise vol.Invalid("The forecast or schedule changed. Review the updated impact before saving.")
+                if not preview["can_save"]:
+                    raise vol.Invalid(preview["message"])
+                planned_start = preview["proposed"]["start"]
+            elif item["timing"] == "fixed":
+                planned_start, intervals, _, _ = await self.plan_edit(item, now)
                 if not intervals:
                     raise vol.Invalid("Wait for an up-to-date forecast before saving this Fixed run.")
-                reserved = [self.reservation(job) for job in jobs.values()
-                            if job["status"] in ACTIVE and job["start"] is not None]
-                starts = await self.hass.async_add_executor_job(
-                    recommend, intervals, [item], reserved, capacity,
-                    self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"],
-                )
-                if job_id not in starts:
+                if planned_start is None:
                     raise vol.Invalid("No available window fits before the finish time with these settings.")
-                item["start"] = ceil(starts[job_id])
-                now = time()
-            replacement = self.build_pending_run(item, jobs, now, original["created"])
+
+            jobs = deepcopy(self.jobs)
+            del jobs[item["id"]]
+            item = dict(item, start=planned_start if item["timing"] == "fixed" else None)
+            replacement = self.build_pending_run(item, jobs, time(), original["created"])
             if original.get("repeat_id"):
                 replacement.update(repeat_id=original["repeat_id"], run_date=original["run_date"])
-            jobs[job_id] = replacement
+            jobs[item["id"]] = replacement
             await self.commit(jobs)
             self.wake.set()
 
