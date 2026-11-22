@@ -1,4 +1,4 @@
-"""Approve and execute one-off Energy Manager workloads in Home Assistant."""
+"""Approve and execute one-off Energy Manager loads in Home Assistant."""
 
 import asyncio
 from copy import deepcopy
@@ -25,7 +25,7 @@ from homeassistant.helpers.storage import Store
 from .automation_filter import AUTOMATION_EXCLUSIONS, excluded
 from .planner import SOURCES, edit_impact, nonnegative, overlaps, read_forecast, recommend, replay
 
-DOMAIN = "em_deferred_workloads"
+DOMAIN = "em_flexible_load_scheduler"
 LOGGER = logging.getLogger(__name__)
 PENDING = {"scheduled", "delayed"}
 ACTIVE = PENDING | {"starting", "running", "stopping", "stop_failed"}
@@ -191,7 +191,7 @@ class Scheduler:
     def __init__(self, hass, config):
         self.hass = hass
         self.config = config
-        self.store = Store(hass, 1, DOMAIN, atomic_writes=True)
+        self.store = Store(hass, 1, "em_deferred_workloads", atomic_writes=True)
         self.jobs = {}
         self.repeats = {}
         self.listeners = set()
@@ -268,7 +268,7 @@ class Scheduler:
         await self.store.async_save(saved)
         # Home Assistant's Store logs some write errors instead of raising them.
         if await self.store.async_load() != saved:
-            raise HomeAssistantError("Could not verify the saved workload schedule.")
+            raise HomeAssistantError("Could not verify the saved load schedule.")
         self.jobs = jobs
         self.repeats = repeats
         data = self.snapshot()
@@ -276,7 +276,7 @@ class Scheduler:
             try:
                 listener(data)
             except Exception:
-                LOGGER.exception("Could not publish the updated workload schedule")
+                LOGGER.exception("Could not publish the updated load schedule")
 
     def automation_available(self, entity):
         state = self.hass.states.get(entity) if re.fullmatch(r"automation\.[a-z0-9_]+", entity) else None
@@ -302,7 +302,7 @@ class Scheduler:
                     if str(UUID(item["id"])) != item["id"] or item["id"] in ids:
                         raise ValueError
                 except ValueError:
-                    raise vol.Invalid("Invalid or duplicate workload ID.") from None
+                    raise vol.Invalid("Invalid or duplicate load ID.") from None
                 ids.append(item["id"])
                 existing = jobs.get(item["id"]) or repeats.get(item["id"])
                 if existing is not None:
@@ -310,8 +310,8 @@ class Scheduler:
                         continue
                     raise vol.Invalid("This approval ID is already in use.")
                 if active_count >= MAX_ACTIVE:
-                    raise vol.Invalid(f"At most {MAX_ACTIVE} workloads can be active.")
-                self.validate_workload(item)
+                    raise vol.Invalid(f"At most {MAX_ACTIVE} loads can be active.")
+                self.validate_load(item)
                 if "repeat" in item:
                     self.add_repeat(repeats, item, now)
                     active_count += 1
@@ -324,7 +324,7 @@ class Scheduler:
             self.wake.set()
             return ids
 
-    def validate_workload(self, item):
+    def validate_load(self, item):
         name = item["name"]
         if item["duration"] % 60:
             raise vol.Invalid(f"{name} needs a whole-minute duration.")
@@ -367,7 +367,7 @@ class Scheduler:
             raise vol.Invalid("Only a scheduled or delayed run can be edited.")
         if "repeat" in item:
             raise vol.Invalid("Edit changes one run at a time.")
-        self.validate_workload(item)
+        self.validate_load(item)
         self.validate_deadline(item, now)
         zone = self.schedule_zone()
         run_date = datetime.fromtimestamp(original["deadline"], zone).date()
@@ -454,7 +454,7 @@ class Scheduler:
         async with self.lock:
             jobs = deepcopy(self.jobs)
             if job_id not in jobs or jobs[job_id]["status"] not in PENDING:
-                raise vol.Invalid("Only a pending workload can be cancelled.")
+                raise vol.Invalid("Only a pending load can be cancelled.")
             job = jobs[job_id]
             if job.get("repeat_id"):
                 job.update(status="skipped", note=MANUAL_SKIP)
@@ -568,7 +568,7 @@ class Scheduler:
         async with self.lock:
             jobs = deepcopy(self.jobs)
             if job_id not in jobs or jobs[job_id]["status"] != "stop_failed":
-                raise vol.Invalid("This workload has no failed stop to retry.")
+                raise vol.Invalid("This load has no failed stop to retry.")
             jobs[job_id].update(status="running", stop_at=time())
             await self.commit(jobs)
             self.wake.set()
@@ -604,7 +604,7 @@ class Scheduler:
                         self.timer = async_track_point_in_utc_time(
                             self.hass, self.request_tick, datetime.fromtimestamp(wake_at, UTC))
             except Exception:
-                LOGGER.exception("Could not process deferred workloads. Retrying in 30 seconds")
+                LOGGER.exception("Could not process flexible loads. Retrying in 30 seconds")
                 self.timer = async_track_point_in_utc_time(
                     self.hass, self.request_tick, datetime.fromtimestamp(time() + 30, UTC))
 
@@ -781,7 +781,7 @@ class Scheduler:
                 finally:
                     observed.cancel()
         except Exception:
-            LOGGER.exception("Deferred workload %s automation failed for %s", phase, entity)
+            LOGGER.exception("Flexible load %s automation failed for %s", phase, entity)
             error = f"{phase.capitalize()} automation reported an error. Check its trace."
         finally:
             unsubscribe()
