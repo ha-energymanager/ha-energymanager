@@ -28,7 +28,7 @@ lovelace:
       filename: dashboards/energy_manager_ev.yaml
     energy-scheduler:
       mode: yaml
-      title: "Scheduler"
+      title: "Load Scheduler"
       icon: mdi:calendar-clock
       show_in_sidebar: true
       filename: dashboards/energy_manager_scheduler.yaml    
