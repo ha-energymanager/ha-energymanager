@@ -289,9 +289,9 @@
       "backup_current": true,
       "new_in_version": "2.1.0"
     },
-    "www/cards/em-deferred-workloads-planner-card.js": {
+    "www/cards/em-flexible-load-scheduler-card.js": {
       "action": "replace",
-      "description": "Deferred Workloads Planner",
+      "description": "Flexible Load Scheduler",
       "backup_current": true,
       "new_in_version": "2.1.0"
     },
@@ -672,29 +672,29 @@
       "backup_current": false,
       "new_in_version": "2.0.0"
     },
-    "custom_components/em_deferred_workloads/__init__.py": {
+    "custom_components/em_flexible_load_scheduler/__init__.py": {
       "action": "replace",
       "description": "Deferred Worksloads Planner Component",
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
-    "custom_components/em_deferred_workloads/planner.py": {
+    "custom_components/em_flexible_load_scheduler/planner.py": {
       "action": "replace",
       "description": "Deferred Worksloads Planner",
       "new_in_version": "2.1.0"
     },
-    "custom_components/em_deferred_workloads/automation_filter.py": {
+    "custom_components/em_flexible_load_scheduler/automation_filter.py": {
       "action": "replace",
       "description": "Deferred Worksloads Automation Filter",
       "new_in_version": "2.1.0"
     },    
-    "custom_components/em_deferred_workloads/manifest.json": {
+    "custom_components/em_flexible_load_scheduler/manifest.json": {
       "action": "replace",
       "description": "Manifest for Deferred Worksloads Planner Component",
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
-    "custom_components/em_deferred_workloads/brand/icon.png": {
+    "custom_components/em_flexible_load_scheduler/brand/icon.png": {
       "action": "replace",
       "description": "Energy Manager Logo",
       "backup_current": false,
@@ -770,7 +770,7 @@
     "new_in_version": "2.1.0"
     },
     {
-    "url": "/local/cards/em-deferred-workloads-planner-card.js",
+    "url": "/local/cards/em-flexible-load-scheduler-card.js",
     "action": "module",
     "new_in_version": "2.1.0"
     }, 
