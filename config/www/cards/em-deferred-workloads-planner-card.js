@@ -113,7 +113,7 @@ function evaluateSchedule(intervals, placements, battery) {
   const jobs = placements.map(window => ({
     ...window, solar: 0, divertedSolar: 0, battery: 0, grid: 0, cost: 0,
   }));
-
+  
   jobs.sort((a, b) => sourceOrder[a.source] - sourceOrder[b.source] || a.id - b.id);
   let deficit = 0;
   let priorityDeficit = 0;
@@ -142,7 +142,6 @@ function evaluateSchedule(intervals, placements, battery) {
       const baseEnd = row.startSoc + (row.endSoc - row.startSoc) *
         (to - row.start) / (row.end - row.start);
       const plannedDischarge = row.discharge * hours;
-
       const floor = Math.min(baseEnd, row.floor);
       const lostDischarge = battery ? Math.min(plannedDischarge,
         Math.max(0, deficit - battery.capacity * (baseEnd - floor) / 100) * battery.dischargeEfficiency) : 0;
@@ -358,16 +357,26 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; }
+        :host { display: block; color-scheme: light dark; }
+        :host([data-theme="light"]) { color-scheme: light; }
+        :host([data-theme="dark"]) { color-scheme: dark; }
         [hidden] { display: none !important; }
         ha-card {
-          --planner-muted: var(--secondary-text-color, #656c75);
-          --planner-line: var(--divider-color, #85858555);
+          --planner-text: var(--primary-text-color, light-dark(#242424, #f1f3f5));
+          --planner-card-bg: var(--ha-card-background, var(--card-background-color, light-dark(#ffffff, #1c1c1c)));
+          --planner-muted: light-dark(var(--secondary-text-color, #565e67),
+            color-mix(in srgb, var(--planner-text) 74%, var(--planner-card-bg)));
+          --planner-line: light-dark(var(--divider-color, #dddddd), #4b5157);
+          --planner-control-line: light-dark(var(--planner-line), #879099);
+          --planner-control-bg: light-dark(var(--secondary-background-color, #f4f5f6),
+            color-mix(in srgb, var(--planner-text) 11%, var(--planner-card-bg)));
+          --planner-approved-bg: light-dark(#f2f3f5,
+            color-mix(in srgb, var(--planner-text) 7%, var(--planner-card-bg)));
           --planner-solar: var(--energy-solar-color, #e8a21c);
           --planner-grid: var(--info-color, #478fe0);
           padding: 16px;
           container-type: inline-size;
-          color: var(--primary-text-color, #242424);
+          color: var(--planner-text);
         }
         * { box-sizing: border-box; }
         h2, h3, p { margin: 0; }
@@ -375,7 +384,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         h3 { font-size: 15px; }
         header { display: flex; align-items: flex-start; gap: 9px; }
         header ha-icon { color: var(--primary-color, #3b80bd); --mdc-icon-size: 22px; }
-        header p, .muted, small { color: var(--planner-muted); font-size: 12px; }
+        header p, .muted, small { color: var(--planner-muted); font-size: 13px; }
         header p { margin-top: 2px; }
         #editors { display: grid; gap: 12px; margin-top: 14px; }
         .editor {
@@ -392,23 +401,24 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         .editor:focus-within { border-color: var(--planner-solar); }
         .workload-name { font-weight: 600; }
         .workload-name input { font-weight: 500; }
-        label { display: grid; min-width: 0; gap: 3px; font-size: 11px; color: var(--planner-muted); }
+        label { display: grid; min-width: 0; gap: 4px; font-size: 12px; font-weight: 500; color: var(--planner-muted); }
         input, select, button {
           min-height: 34px;
           min-width: 0;
-          border: 1px solid var(--planner-line);
+          border: 1px solid var(--planner-control-line);
           border-radius: 6px;
-          color: var(--primary-text-color, #242424);
+          color: var(--planner-text);
           font: inherit;
         }
         input, select {
           width: 100%;
           padding: 4px 6px;
-          background: var(--secondary-background-color, transparent);
+          background: var(--planner-control-bg);
           font-size: 13px;
-          color-scheme: var(--ha-card-color-scheme, light dark);
+          color-scheme: inherit;
         }
-        button { background: transparent; padding: 4px 10px; cursor: pointer; }
+        input::placeholder { color: var(--planner-muted); opacity: 1; }
+        button { background: light-dark(transparent, var(--planner-control-bg)); padding: 4px 10px; cursor: pointer; }
         button:focus-visible, input:focus-visible, select:focus-visible {
           outline: 2px solid var(--primary-color, #03a9f4);
           outline-offset: 1px;
@@ -421,7 +431,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         .automation-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
         .repeat-days { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 5px 8px 8px;
           border: 1px solid var(--planner-line); border-radius: 6px; color: var(--planner-muted); }
-        .repeat-days legend { font-size: 11px; }
+        .repeat-days legend { font-size: 12px; }
         .weekday-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
         #workload-guide { margin-top: 16px; padding: 10px 12px; border: 1px solid var(--planner-line);
           border-radius: 8px; font-size: 13px; line-height: 1.5; }
@@ -440,7 +450,9 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         #approval button { border-color: var(--primary-color, #03a9f4); font-weight: 600; }
         button:disabled { opacity: 0.55; cursor: default; }
         #approval-note, #action-status { margin-top: 5px; }
-        #approved { border-top: 1px solid var(--planner-line); margin-top: 14px; padding-top: 12px; }
+        #approved { margin-top: 18px; padding: 14px; background: var(--planner-approved-bg);
+          border: 1px solid var(--planner-line); border-radius: 10px; }
+        #approved-title { font-size: 16px; margin-bottom: 10px; }
         #repeat-list, #approved-list, #history-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 8px 0 0; }
         #occurrences, #history { margin-top: 12px; }
         .approved-run { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px;
@@ -449,7 +461,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           overflow-wrap: anywhere; font-size: 13px; }
         .approved-run[data-status] {
           --run-fill: color-mix(in srgb, var(--run-color, transparent) 12%, transparent);
-          --run-border: color-mix(in srgb, var(--run-color, var(--planner-line)) 75%, var(--primary-text-color, #242424) 25%);
+          --run-border: color-mix(in srgb, var(--run-color, var(--planner-line)) 75%, var(--planner-text) 25%);
         }
         .approved-run:is([data-status="scheduled"], [data-status="starting"], [data-status="stopping"]) {
           --run-color: #418454;
@@ -503,6 +515,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           .recommendation .detail { grid-column: 1 / -1; }
         }
         @container (max-width: 410px) {
+          #approved { padding: 10px; }
+          .approved-run { grid-template-columns: minmax(0, 1fr); }
+          .approved-run > button { justify-self: start; }
+          .run-actions { justify-content: flex-start; }
           .editor {
             grid-template-areas: "name name remove" "power duration duration"
               "deadline deadline deadline" "source source source";
@@ -664,6 +680,9 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
   set hass(hass) {
     const old = this._hass;
     this._hass = hass;
+    const darkMode = hass.themes?.darkMode;
+    if (typeof darkMode === "boolean") this.setAttribute("data-theme", darkMode ? "dark" : "light");
+    else this.removeAttribute("data-theme");
     this._connectScheduler();
     if (!this._config) return;
     const { entity, capacityEntity } = this._config;
