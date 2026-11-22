@@ -423,6 +423,11 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           border: 1px solid var(--planner-line); border-radius: 6px; color: var(--planner-muted); }
         .repeat-days legend { font-size: 11px; }
         .weekday-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+        #edit-impact { margin-top: 12px; }
+        #edit-impact table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+        #edit-impact th, #edit-impact td { padding: 6px; text-align: start; border-bottom: 1px solid var(--planner-line);
+          vertical-align: top; overflow-wrap: anywhere; }
+        #edit-impact-note, #edit-impact-delta { margin-top: 6px; }
         #approval { margin-top: 10px; }
         #approval button { border-color: var(--primary-color, #03a9f4); font-weight: 600; }
         button:disabled { opacity: 0.55; cursor: default; }
@@ -540,6 +545,15 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           <ul id="recommendations"></ul>
           <p id="totals"></p>
           <p id="effects" class="muted" hidden></p>
+        </section>
+        <section id="edit-impact" aria-labelledby="edit-impact-title" hidden>
+          <h3 id="edit-impact-title">Forecast impact of changes</h3>
+          <p id="edit-impact-note" class="muted" role="status"></p>
+          <table id="edit-impact-table" hidden>
+            <thead><tr><th scope="col">Estimate</th><th scope="col">Current booking</th><th scope="col">Proposed change</th></tr></thead>
+            <tbody id="edit-impact-rows"></tbody>
+          </table>
+          <p id="edit-impact-delta" hidden></p>
         </section>
         <div id="approval" hidden>
           <button id="approve" type="button">Approve schedule</button>
@@ -826,11 +840,13 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._approval = null;
     this._get("cancel-edit").hidden = !this._editing;
     this._get("cancel-edit").disabled = Boolean(this._saving);
+    this._get("edit-impact").hidden = !this._editing;
     if (this._editing) {
       const now = Date.now();
       this._get("status").hidden = true;
       this._get("schedule").hidden = true;
       this._renderApproval(this._readWorkloads(this._hass.config?.time_zone || undefined, now, now), { jobs: [] }, null, now);
+      this._renderEditPreview(now);
       return;
     }
     const state = this._hass?.states?.[entity];
@@ -873,6 +889,106 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._renderApproval(workloads, schedule, intervals.at(-1).end, now);
     this._get("status").hidden = true;
     this._get("schedule").hidden = false;
+  }
+
+  _renderEditPreview(now) {
+    const edit = this._editing;
+    const draft = this._approval?.[0]?.data;
+    const note = this._get("edit-impact-note");
+    const table = this._get("edit-impact-table");
+    const delta = this._get("edit-impact-delta");
+    table.hidden = true;
+    delta.hidden = true;
+    if (!draft || !this._backend?.supports_edit_preview) {
+      edit.preview = null;
+      note.textContent = draft ? "Update the workload scheduler to preview and save changes." :
+        "Enter valid settings to see their forecast impact.";
+      this._approval = null;
+      this._get("approve").disabled = true;
+      return;
+    }
+
+    const job = { ...draft, id: edit.job.id };
+    const key = JSON.stringify([job, Math.floor(now / minute)]);
+    const forecast = this._hass.states?.[this._config.entity];
+    const capacity = this._hass.states?.[this._config.capacityEntity];
+    if (edit.preview?.key !== key || edit.preview.backend !== this._backend ||
+        edit.preview.forecast !== forecast || edit.preview.capacity !== capacity) {
+      const preview = { key, backend: this._backend, forecast, capacity };
+      edit.preview = preview;
+      this._hass.callWS({ type: schedulerDomain + "/edit_preview", job }).then(result => {
+        if (this._editing !== edit || edit.preview !== preview) return;
+        preview.result = result;
+        this._render();
+      }).catch(error => {
+        if (this._editing !== edit || edit.preview !== preview) return;
+        preview.error = error?.message || "Could not estimate this change.";
+        this._render();
+      });
+    }
+    const { result, error } = edit.preview;
+    note.textContent = error || result?.message || (result ? "" : "Checking the energy forecast…");
+    if (!result?.can_save) {
+      this._approval = null;
+      this._get("approve").disabled = true;
+    }
+    if (!result) return;
+    this._showEditComparison(result);
+  }
+
+  _showEditComparison({ current, proposed }) {
+    const locale = this._hass.language || undefined;
+    const time = new Intl.DateTimeFormat(locale, {
+      weekday: "short", hour: "numeric", minute: "2-digit", timeZone: this._hass.config?.time_zone || undefined,
+    });
+    const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
+    const money = new Intl.NumberFormat(locale, {
+      style: "currency", currency: this._hass.config?.currency || "AUD", currencyDisplay: "narrowSymbol",
+    });
+    const window = booking => booking.start === null ? "No start scheduled" :
+      time.format(booking.start * 1000) + " – " + time.format(booking.end * 1000);
+    const cost = (booking, field) => booking.impact?.[field] == null ? "Unavailable" : money.format(booking.impact[field]);
+    const mix = booking => {
+      if (!booking.impact) return "Unavailable";
+      const amounts = booking.impact.mix;
+      return [["solar", "solar"], ["diverted", "solar diverted from charging"], ["battery", "battery"], ["grid", "grid"]]
+        .filter(([key]) => amounts[key] > energyTolerance)
+        .map(([key, label]) => number.format(amounts[key]) + " kWh " + label).join(" · ");
+    };
+    const grid = booking => booking.impact ? number.format(booking.impact.grid) + " kWh" : "Unavailable";
+    const rows = this._get("edit-impact-rows");
+    rows.replaceChildren();
+    for (const [label, format] of [
+      ["Run window", window],
+      ["Finish by", booking => time.format(booking.deadline * 1000)],
+      ["Workload energy mix", mix],
+      ["Additional site grid use", grid],
+      ["Battery energy change at forecast end", booking => booking.impact?.deficit != null ?
+        number.format(-booking.impact.deficit || 0) + " kWh" : "Unavailable"],
+      ["Extra grid cost", booking => cost(booking, "grid_cost")],
+      ["Feed-in impact", booking => cost(booking, "export_cost")],
+      ["Estimated added cost", booking => cost(booking, "total_cost")],
+    ]) {
+      const row = document.createElement("tr");
+      const heading = document.createElement("th");
+      heading.scope = "row";
+      heading.textContent = label;
+      row.append(heading);
+      for (const booking of [current, proposed]) {
+        const cell = document.createElement("td");
+        cell.textContent = format(booking);
+        row.append(cell);
+      }
+      rows.append(row);
+    }
+    this._get("edit-impact-table").hidden = false;
+    if (current.impact?.total_cost != null && proposed.impact?.total_cost != null) {
+      const diff = proposed.impact.total_cost - current.impact.total_cost;
+      const delta = this._get("edit-impact-delta");
+      delta.hidden = false;
+      delta.textContent = Math.abs(diff) < 0.005 ? "No estimated cost change." :
+        "Estimated change · " + money.format(Math.abs(diff)) + (diff < 0 ? " less" : " more");
+    }
   }
 
   _renderApproval(workloads, schedule, horizon, now) {
@@ -963,6 +1079,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
 
   async _approve() {
     const shown = JSON.stringify(this._approval);
+    const review = this._editing?.preview?.result?.review;
     this._render();
     if (!this._approval || this._saving) return;
     if (shown !== JSON.stringify(this._approval)) {
@@ -981,7 +1098,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._render();
     try {
       if (this._editing) {
-        await this._hass.callWS({ type: schedulerDomain + "/edit", job: drafts[0].data });
+        await this._hass.callWS({ type: schedulerDomain + "/edit", job: drafts[0].data, review });
         this._endEdit("Run updated.");
         return;
       }
@@ -991,6 +1108,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         drafts.length === 1 ? "Run approved." : drafts.length + " runs approved.");
     } catch (error) {
       this._actionStatus(error?.message || "Could not save the schedule.");
+      if (this._editing) this._editing.preview = null;
     } finally {
       this._saving = false;
       this._render();
