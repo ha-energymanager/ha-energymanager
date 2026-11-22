@@ -88,6 +88,11 @@ const sources = [
   ["priority", "Solar before battery charging"],
   ["grid", "Grid allowed"],
 ];
+const policies = {
+  defer: "Skip if the forecast can’t support it",
+  must: "Must run",
+  search: "Keep looking on future days",
+};
 const sourceOrder = { solar: 0, priority: 1, battery: 2, grid: 3 };
 const beamWidth = 12;
 const forecastRoundingKw = 0.005;
@@ -596,10 +601,15 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
                 <option value="fixed">Fixed</option><option value="flexible">Flexible</option>
               </select></label>
               <label>If the forecast changes<select data-field="policy">
-                <option value="defer">May be deferred</option><option value="must">Must run</option>
+                <option value="defer">${policies.defer}</option><option value="must">${policies.must}</option>
+                <option value="search" hidden disabled>${policies.search}</option>
               </select></label>
               <label>Repeat<select data-field="cadence">
                 <option value="once">Once-off</option><option value="repeated">Repeated</option>
+              </select></label>
+              <label class="future-search" hidden>Keep looking for<select data-field="search_days">
+                <option value="3">3 days</option><option value="7">7 days</option>
+                <option value="unlimited">Until cancelled</option>
               </select></label>
               <fieldset class="repeat-days" hidden>
                 <legend>Run on</legend>
@@ -680,9 +690,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
               Leave it blank when the appliance finishes on its own.</li>
             <li><strong>Fixed</strong> keeps the first suitable start the scheduler selects for that occurrence.
               <strong>Flexible</strong> can move the start as the forecast changes.</li>
-            <li><strong>May be deferred</strong> can skip the run if its power source is unavailable at the fixed start or no suitable
-              window is found by the latest start. <strong>Must run</strong> can use grid power if needed and still respects
-              the selected automation’s conditions.</li>
+            <li><strong>Must run</strong> can use battery or grid power if needed. A Fixed load keeps its start time.
+              A Flexible load starts by the latest time that lets it finish by the deadline.</li>
+            <li><strong>${policies.defer}</strong> skips a Fixed load if the forecast cannot cover it at the scheduled time.
+              A Flexible load looks for a suitable time before the deadline and skips the run if no time fits.</li>
+            <li><strong>Keep looking on future days</strong> is for Flexible, once-off loads. The scheduler uses the same
+              finish time each day and starts the load once when a suitable time is forecast. Choose 3 days, 7 days or
+              Until cancelled. The first day with enough time before the deadline counts as day one.</li>
             <li><strong>Once-off</strong> runs once. <strong>Repeated</strong> runs on the selected weekdays.
               The scheduler chooses a start that fits before <strong>Finish by</strong> on each selected day.</li>
           </ul>
@@ -786,14 +800,25 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     for (const field of ["start_automation", "stop_automation"]) {
       input(field).addEventListener("focus", () => this._populateAutomations(row));
     }
+    const updateScheduleFields = () => {
+      const enabled = input("enabled").checked;
+      const repeated = enabled && input("cadence").value === "repeated";
+      const searchOption = input("policy").querySelector('[value="search"]');
+      const canSearch = enabled && input("timing").value === "flexible" && !repeated && !job?.repeat_id;
+      searchOption.hidden = searchOption.disabled = !canSearch;
+      if (!canSearch && input("policy").value === "search") input("policy").value = "defer";
+      const searching = canSearch && input("policy").value === "search";
+      row.querySelector(".repeat-days").hidden = !repeated;
+      row.querySelector(".future-search").hidden = !searching;
+      row.querySelector(".deadline-label").textContent = searching ? "Finish by each day" :
+        repeated || job ? "Finish by" : "Finish by (optional)";
+    };
     row.addEventListener("input", event => {
       if (event.target === input("enabled")) {
         row.querySelector(".automation-options").hidden = !input("enabled").checked;
         this._populateAutomations(row);
       }
-      const repeated = input("enabled").checked && input("cadence").value === "repeated";
-      row.querySelector(".repeat-days").hidden = !repeated;
-      row.querySelector(".deadline-label").textContent = repeated || job ? "Finish by" : "Finish by (optional)";
+      updateScheduleFields();
       clearTimeout(this._editTimer);
       this._editTimer = setTimeout(() => this._render(), 200);
     });
@@ -810,7 +835,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       input("cadence").closest("label").hidden = true;
       row.querySelector(".automation-options").hidden = false;
       row.querySelector(".deadline-label").textContent = "Finish by";
-      input("deadline").value = localDateTime(job.deadline * 1000, timeZone).slice(11);
+      input("deadline").value = job.search?.finish_by ?? localDateTime(job.deadline * 1000, timeZone).slice(11);
+      if (job.search) input("search_days").value = job.search.days ?? "unlimited";
       input("minutes").value = job.duration / 60;
       this._populateAutomations(row);
       for (const field of ["name", "power", "source", "timing", "policy", "start_automation", "stop_automation"]) {
@@ -818,6 +844,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       }
       this._editing = { row, job };
     }
+    updateScheduleFields();
     this._get("editors").append(row);
     if (focus) input("name").focus();
     this._render();
@@ -909,6 +936,11 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       const deadlineValue = value("deadline");
       const enabled = row.querySelector('[data-field="enabled"]').checked;
       const timing = value("timing");
+      const policy = value("policy");
+      const days = value("search_days");
+      const search = enabled && policy === "search" ? {
+        finish_by: deadlineValue, days: days === "unlimited" ? null : Number(days),
+      } : null;
       const repeated = enabled && value("cadence") === "repeated";
       const repeat = repeated ? {
         days: Array.from(row.querySelectorAll(".weekday-options input:checked"), input => Number(input.value)),
@@ -916,10 +948,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       } : null;
       const edit = this._editing?.job;
       const finishDate = edit ? localDateTime(edit.deadline * 1000, timeZone).slice(0, 10) : null;
-      const deadline = !repeated && deadlineValue ? parseDeadline(deadlineValue, timeZone, now, finishDate) : null;
+      const deadline = !repeated && !search && deadlineValue ? parseDeadline(deadlineValue, timeZone, now, finishDate) : null;
       let problem = "";
       if (!(power >= 0.1) || !Number.isSafeInteger(minutes) || minutes < 1) {
         problem = "Enter a power and a whole-minute duration.";
+      } else if (search) {
+        const finish = clockMinutes(search.finish_by);
+        if (finish === null || finish < minutes) problem = "Choose a daily finish time that leaves enough time to run.";
       } else if (edit) {
         if (deadline === null || deadline - minutes * minute <= now || deadline - now > 48 * hour) {
           problem = "Choose a finish time that leaves enough time to run on the original day.";
@@ -938,8 +973,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         id: Number(row.dataset.id), name: value("name").trim() || "Load " + (index + 1),
         power, duration: minutes * minute, deadline,
         source: value("source"),
-        enabled, timing, repeat,
-        policy: value("policy"),
+        enabled, timing, repeat, policy, search,
         start_automation: value("start_automation"),
         stop_automation: value("stop_automation"),
         problem,
@@ -999,7 +1033,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       [row.startSoc, row.endSoc, row.floor].every(value => value !== null && value <= 100)) ?
       { capacity: siteCapacity, chargeEfficiency, dischargeEfficiency } : null;
     const reserved = approvedWindows(this._backend?.jobs ?? [], now);
-    const schedule = recommend(intervals, loads.filter(row => !row.problem && !row.repeat), battery, reserved);
+    const schedule = recommend(intervals, loads.filter(row => !row.problem && !row.repeat && !row.search), battery, reserved);
     this._renderSchedule(loads, schedule, intervals, battery, timeZone, now, reserved);
     this._renderApproval(loads, schedule, intervals.at(-1).end, now);
     this._get("status").hidden = true;
@@ -1087,6 +1121,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       fixed_at_risk: "May be skipped if the forecast cannot cover the fixed start",
       conflict: "Overlaps another load using the same automation",
       no_window: "No time fits the selected settings",
+      searching: "Still looking for a suitable time",
       no_forecast: "Waiting for an up-to-date forecast",
     };
     const note = this._get("edit-impact-note");
@@ -1106,10 +1141,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const rows = this._get("edit-impact-rows");
     rows.replaceChildren();
     for (const [label, format] of [
-      ["Finish by", booking => time.format(booking.deadline * 1000)],
+      ["Finish by", booking => booking.search ? booking.search.finish_by + " each day" : time.format(booking.deadline * 1000)],
       ["Power source preference", booking => source.get(booking.source)],
       ["Timing", booking => booking.timing === "fixed" ? "Fixed" : "Flexible"],
-      ["If the forecast changes", booking => booking.policy === "must" ? "Must run" : "May be deferred"],
+      ["If the forecast changes", booking => policies[booking.policy]],
+      ...(current.search || proposed.search ? [["Keep looking for", booking =>
+        !booking.search ? "—" : booking.search.days === null ? "Until cancelled" : booking.search.days + " days"]] : []),
       ["Power and duration", booking => number.format(booking.power) + " kW · " + booking.duration / 60 + " min"],
       ["Expected run time", window],
       ["How it would run", booking => outcome[booking.outcome]],
@@ -1197,6 +1234,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         else jobs.push({ rowId: row.id, data: {
           name: row.name, power: row.power, duration: row.duration / 1000, source: row.source,
           timing: row.timing, policy: row.policy, repeat: row.repeat,
+          start_automation: row.start_automation, stop_automation: row.stop_automation,
+        } });
+      } else if (row.search) {
+        if (!backend?.supports_future_day_search) issues.push(label + "Update the Home Assistant scheduler to search future days.");
+        else jobs.push({ rowId: row.id, data: {
+          name: row.name, power: row.power, duration: row.duration / 1000, source: row.source,
+          timing: row.timing, policy: row.policy, search: row.search,
           start_automation: row.start_automation, stop_automation: row.stop_automation,
         } });
       } else if (!edit && horizon === null) {
@@ -1387,6 +1431,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       }
       const note = document.createElement("small");
       note.textContent = job.note;
+      if (job.search) {
+        const limit = job.search.days === null ? "until cancelled" : "up to " + job.search.days + " days";
+        note.textContent = ["scheduled", "delayed"].includes(job.status) ?
+          [job.note, "Finish by " + job.search.finish_by + " each day · Looking " + limit].filter(Boolean).join(" ") :
+          job.note;
+      }
       summary.append(title, time, note);
       item.append(summary);
       if (admin && ["scheduled", "delayed", "stop_failed"].includes(job.status)) {
@@ -1456,7 +1506,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         item.dataset.source = "unplaced";
         const fallback = row.enabled && row.timing === "flexible" && row.policy === "must" && row.deadline !== null;
         const latest = fallback ? row.deadline - row.duration : null;
-        detail.textContent = row.problem || (row.repeat ? "Home Assistant will pick a start time on each selected day." : fallback ? "No suitable time found. If you save this schedule, the latest start is " +
+        detail.textContent = row.problem || (row.search ? "Home Assistant will look for a suitable time after you save." : row.repeat ? "Home Assistant will pick a start time on each selected day." : fallback ? "No suitable time found. If you save this schedule, the latest start is " +
           startLabel(latest) + ", " + clock.format(latest) + "." : row.duration > last.end - intervals[0].from ?
             "The forecast is too short for this duration." : reserved.length ?
               "No time in the forecast fits this load. Other scheduled loads may be limiting the available times. Try a later finish time or a shorter run." :
