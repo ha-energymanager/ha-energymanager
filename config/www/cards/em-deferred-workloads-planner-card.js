@@ -464,18 +464,18 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           --run-border: color-mix(in srgb, var(--run-color, var(--planner-line)) 75%, var(--planner-text) 25%);
         }
         .approved-run:is([data-status="scheduled"], [data-status="starting"], [data-status="stopping"]) {
-          --run-color: #418454;
+          --run-color: #2aad4f;
         }
         .approved-run[data-status="running"] {
-          --run-color: #2aae56;
+          --run-color: #18db59;
           --run-fill: color-mix(in srgb, var(--run-color) 22%, transparent);
           border-inline-start-width: 4px;
         }
         .run-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-        .approved-run[data-status="skipped"] { --run-color: #3b80bd; }
-        .approved-run[data-status="repeat"] { --run-color: #7866ae; }
-        .approved-run[data-status="delayed"] { --run-color: #a4792d; }
-        .approved-run:is([data-status="failed"], [data-status="stop_failed"]) { --run-color: #b65764; }
+        .approved-run[data-status="skipped"] { --run-color: #c45c1b; }
+        .approved-run[data-status="repeat"] { --run-color: #2051e3; }
+        .approved-run[data-status="delayed"] { --run-color: #f0820c; }
+        .approved-run:is([data-status="failed"], [data-status="stop_failed"]) { --run-color: #e0341d; }
         .approved-run small { display: block; }
         #status { margin-top: 12px; color: var(--planner-muted); }
         #schedule { border-top: 1px solid var(--planner-line); margin-top: 14px; padding-top: 12px; }
