@@ -174,10 +174,11 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None
                 diverted = min(flexible, demand - direct) if job["source"] == "priority" else 0
                 flexible -= diverted
                 diverted_total += diverted
-                stored = min(discharge, demand - direct) if job["source"] in ("battery", "grid") else 0
+                stored = (min(discharge, demand - direct - diverted)
+                          if job.get("reserved") or job["source"] in ("battery", "grid") else 0)
                 discharge -= stored
                 imported = max(0, demand - direct - diverted - stored)
-                if imported > EPS and job["source"] != "grid":
+                if imported > EPS and job["source"] != "grid" and not job.get("reserved"):
                     return None
                 if stored > EPS:
                     deficit += stored / discharge_eff
