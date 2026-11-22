@@ -605,7 +605,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
             <ul id="history-list"></ul>
           </div>
         </section>
-        <details id="load-guide" open>
+        <details id="load-guide">
           <summary>How to schedule a load</summary>
           <ol>
             <li>Select <strong>Add load</strong> or use the first row. Enter a name, power in kW, and duration in minutes.
