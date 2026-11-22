@@ -2464,26 +2464,27 @@ script:
         data:
           topic: "homeassistant/sensor/inverter/battery_power/state"
           payload: >
+            {% set additional_battery = states('sensor.additional_battery_power') | float(0) %}
             {% if brand == 'sungrow' %}
-              {{ states('sensor.sungrow_battery_power') | float(0) }}
+              {{ (states('sensor.sungrow_battery_power') | float(0) + additional_battery | abs) | round(0) }}
             {% elif brand == 'sigenergy' %}
-              {{ states('sensor.sigenergy_battery_power') | float(0) }}
+              {{ (states('sensor.sigenergy_battery_power') | float(0) - additional_battery) | round(0) }}
             {% elif brand == 'alphaess' %}
-              {{ states('sensor.alphaess_battery_power') | float(0) }}
+              {{ (states('sensor.alphaess_battery_power') | float(0) + additional_battery) | round(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
               {% if states('sensor.goodwe_battery_power') not in ['unknown', 'unavailable'] %}
-                {{ states('sensor.goodwe_battery_power') | float(0) }}
+                {{ (states('sensor.goodwe_battery_power') | float(0) + additional_battery) | round(0) }}
               {% elif states('sensor.battery_power') not in ['unknown', 'unavailable'] %}
-                {{ states('sensor.battery_power') | float(0) }}
+                {{ (states('sensor.battery_power') | float(0) + additional_battery) | round(0) }}
               {% else %}
-                0
+                {{ additional_battery | round(0) }}
               {% endif %}
             {% elif brand == 'fronius' %}
-              {{ states('sensor.fronius_battery_power') | float(0) }}
+              {{ (states('sensor.fronius_battery_power') | float(0) + additional_battery) | round(0) }}
             {% elif brand == 'solaredge' %}
-              {{ states('sensor.solaredge_battery_power') | float(0) }}
+              {{ (states('sensor.solaredge_battery_power') | float(0) - additional_battery) | round(0) }}
             {% elif brand == 'foxess' %}
-              {{ states(fox_battery) | float(0) if has_value(fox_battery) else 'unknown' }}
+              {{ (states(fox_battery) | float(0) - additional_battery) | round(0) if has_value(fox_battery) else 'unknown' }}
             {% endif %}
           retain: true
       - variables:
@@ -2551,32 +2552,34 @@ script:
               {{ states(fox_grid) | float(0) if has_value(fox_grid) else 'unknown' }}
             {% endif %}
           battery_power: >
+            {% set additional_battery = states('sensor.additional_battery_power') | float(0) %}
             {% if brand == 'sungrow' %}
-              {{ states('sensor.sungrow_battery_power') | float(0) }}
+              {{ (states('sensor.sungrow_battery_power') | float(0) + additional_battery | abs) | round(0) }}
             {% elif brand == 'sigenergy' %}
-              {{ states('sensor.sigenergy_battery_power') | float(0) }}
+              {{ (states('sensor.sigenergy_battery_power') | float(0) - additional_battery) | round(0) }}
             {% elif brand == 'alphaess' %}
-              {{ states('sensor.alphaess_battery_power') | float(0) }}
+              {{ (states('sensor.alphaess_battery_power') | float(0) + additional_battery) | round(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
               {% if states('sensor.goodwe_battery_power') not in ['unknown', 'unavailable'] %}
-                {{ states('sensor.goodwe_battery_power') | float(0) }}
+                {{ (states('sensor.goodwe_battery_power') | float(0) + additional_battery) | round(0) }}
               {% elif states('sensor.battery_power') not in ['unknown', 'unavailable'] %}
-                {{ states('sensor.battery_power') | float(0) }}
+                {{ (states('sensor.battery_power') | float(0) + additional_battery) | round(0) }}
               {% else %}
-                0
+                {{ additional_battery | round(0) }}
               {% endif %}
             {% elif brand == 'fronius' %}
-              {{ states('sensor.fronius_battery_power') | float(0) }}
+              {{ (states('sensor.fronius_battery_power') | float(0) + additional_battery) | round(0) }}
             {% elif brand == 'solaredge' %}
-              {{ states('sensor.solaredge_battery_power') | float(0) }}
+              {{ (states('sensor.solaredge_battery_power') | float(0) - additional_battery) | round(0) }}
             {% elif brand == 'foxess' %}
-              {{ states(fox_battery) | float(0) if has_value(fox_battery) else 'unknown' }}
+              {{ (states(fox_battery) | float(0) - additional_battery) | round(0) if has_value(fox_battery) else 'unknown' }}
             {% endif %}
       - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/load_power/state"
           payload: >
             {% set additional = states('sensor.additional_pv_power') | float(0) %}
+            {% set additional_battery = states('sensor.additional_battery_power') | float(0) %}
             {% set ev_is_upstream = is_state('input_boolean.em_ev_circuit_upstream', 'on') %}
             {% set ev_amps_state = states('sensor.charger_current_import') %}
             {% set ev_amps = ev_amps_state | float(0)
@@ -2590,7 +2593,7 @@ script:
               {% set pv_power = states('sensor.sigenergy_pv_power') | float(0) + additional %}
               {% set battery_power = states('sensor.sigenergy_battery_power') | float(0) %}
               {% set grid_power = states('sensor.sigenergy_grid_power') | float(0) %}
-              {{ (pv_power - battery_power + grid_power + ev_to_add) | round(0) }}
+              {{ (pv_power - battery_power + grid_power + additional_battery + ev_to_add) | round(0) }}
             {% elif brand == 'alphaess' %}
               {% set pv_base =
                   states('sensor.alphaess_pv_power')
@@ -2599,9 +2602,9 @@ script:
               {% set pv_power = (pv_base | float(0)) + additional %}
               {% set grid_power = states('sensor.alphaess_grid_power') | float(0) %}
               {% set battery_power = states('sensor.alphaess_battery_power') | float(0) %}
-              {{ (pv_power + grid_power + battery_power + ev_to_add) | round(0) }}
+              {{ (pv_power + grid_power + battery_power + additional_battery + ev_to_add) | round(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
-              {{ (pv_power + battery_power - grid_power + ev_to_add) | round(0) }}
+              {{ (pv_power | float(0) + battery_power | float(0) - grid_power | float(0) + additional_battery + ev_to_add) | round(0) }}
             {% elif brand == 'fronius' %}
               {% set pv1 = states('sensor.fronius_pv1_power_raw') | float(0) %}
               {% set pv2 = states('sensor.fronius_pv2_power_raw') | float(0) %}
@@ -2617,7 +2620,7 @@ script:
                   (states('sensor.fronius_battery_discharge_power') | float(0))
                   * (10 ** sf_dis) %}
               {{ (pv_power + grid_power - battery_charge_power
-                  + battery_discharge_power + ev_to_add) | round(0) }}
+                  + battery_discharge_power + additional_battery + ev_to_add) | round(0) }}
             {% elif brand == 'solaredge' %}
               {% set sf_grid = states('sensor.solaredge_meter_power_sf') | float(0) %}
               {% set sf_inv = states('sensor.solaredge_inv_active_power_sf') | float(0) %}
@@ -2625,7 +2628,7 @@ script:
               {% set inv_power_raw = states('sensor.solaredge_inv_active_power') | float(0) %}
               {{ (((inv_power_raw * (10 ** sf_inv)) + additional)
                   - (grid_power_raw * (10 ** sf_grid))
-                  + ev_to_add) | round(0) }}
+                  + additional_battery + ev_to_add) | round(0) }}
             {% elif brand == 'foxess' %}
               {{ (states(fox_load) | float(0) + ev_to_add) | round(0) if has_value(fox_load) else 'unknown' }}
             {% else %}
@@ -2722,46 +2725,48 @@ script:
         data:
           topic: "homeassistant/sensor/inverter/battery_charging_power/state"
           payload: >
+            {% set additional_charge = [0, 0 - (states('sensor.additional_battery_power') | float(0))] | max %}
             {% if brand == 'sungrow' %}
-              {{ states('sensor.sungrow_battery_power') | float(0) if states('sensor.sungrow_battery_charging') == 'True' else 0 }}
+              {{ ((states('sensor.sungrow_battery_power') | float(0) if states('sensor.sungrow_battery_charging') == 'True' else 0) + additional_charge) | round(0) }}
             {% elif brand == 'sigenergy' %}
               {% set battery_power = states('sensor.sigenergy_battery_power') | float(0) %}
-              {{ max(0, battery_power) }}
+              {{ (max(0, battery_power) + additional_charge) | round(0) }}
             {% elif brand == 'alphaess' %}
-              {{ (states('sensor.alphaess_battery_power') | float(0) * -1) if states('sensor.alphaess_battery_power') | float(0) < 0 else 0 }}
+              {{ (max(0, 0 - (states('sensor.alphaess_battery_power') | float(0))) + additional_charge) | round(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
-              {{ max(0, -battery_power) }}
+              {{ (max(0, 0 - (battery_power | float(0))) + additional_charge) | round(0) }}
             {% elif brand == 'fronius' %}
               {% set sf = states('sensor.fronius_battery_charge_rate_sf') | int(0) %}
-              {{ (states('sensor.fronius_battery_charge_power') | float(0) * (10 ** sf)) | int(0) }}
+              {{ ((states('sensor.fronius_battery_charge_power') | float(0) * (10 ** sf)) + additional_charge) | round(0) }}
             {% elif brand == 'solaredge' %}
               {% set battery_power = states('sensor.solaredge_battery_power') | float(0) %}
-              {{ max(0, battery_power) }}
+              {{ (max(0, battery_power) + additional_charge) | round(0) }}
             {% elif brand == 'foxess' %}
-              {{ ([states(fox_battery) | float(0), 0] | max) | round(0) if has_value(fox_battery) else 'unknown' }}
+              {{ (([states(fox_battery) | float(0), 0] | max) + additional_charge) | round(0) if has_value(fox_battery) else 'unknown' }}
             {% endif %}
           retain: true
       - action: mqtt.publish
         data:
           topic: "homeassistant/sensor/inverter/battery_discharging_power/state"
           payload: >
+            {% set additional_discharge = [0, states('sensor.additional_battery_power') | float(0)] | max %}
             {% if brand == 'sungrow' %}
-              {{ states('sensor.sungrow_battery_power') | float(0) if states('sensor.sungrow_battery_discharging') == 'True' else 0 }}
+              {{ ((states('sensor.sungrow_battery_power') | float(0) if states('sensor.sungrow_battery_discharging') == 'True' else 0) + additional_discharge) | round(0) }}
             {% elif brand == 'sigenergy' %}
               {% set battery_power = states('sensor.sigenergy_battery_power') | float(0) %}
-              {{ max(0, -battery_power) }}
+              {{ (max(0, -battery_power) + additional_discharge) | round(0) }}
             {% elif brand == 'alphaess' %}
-              {{ states('sensor.alphaess_battery_power') | float(0) if states('sensor.alphaess_battery_power') | float(0) > 0 else 0 }}
+              {{ (max(0, states('sensor.alphaess_battery_power') | float(0)) + additional_discharge) | round(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
-              {{ max(0, battery_power) }}
+              {{ (max(0, battery_power | float(0)) + additional_discharge) | round(0) }}
             {% elif brand == 'fronius' %}
               {% set sf = states('sensor.fronius_battery_charge_rate_sf') | int(0) %}
-              {{ (states('sensor.fronius_battery_discharge_power') | float(0) * (10 ** sf)) | int(0) }}
+              {{ ((states('sensor.fronius_battery_discharge_power') | float(0) * (10 ** sf)) + additional_discharge) | round(0) }}
             {% elif brand == 'solaredge' %}
               {% set battery_power = states('sensor.solaredge_battery_power') | float(0) %}
-              {{ max(0, -battery_power) }}
+              {{ (max(0, -battery_power) + additional_discharge) | round(0) }}
             {% elif brand == 'foxess' %}
-              {{ ([0 - (states(fox_battery) | float(0)), 0] | max) | round(0) if has_value(fox_battery) else 'unknown' }}
+              {{ (([0 - (states(fox_battery) | float(0)), 0] | max) + additional_discharge) | round(0) if has_value(fox_battery) else 'unknown' }}
             {% endif %}
           retain: true
       # Publish Battery Data
