@@ -75,7 +75,7 @@ recorder:
       - script_started
 
 em_dashboard_layout:
-em_deferred_workloads: {}
+em_flexible_load_scheduler: {}
 
 # === ENERGY_MANAGER_UI_END ===
 
