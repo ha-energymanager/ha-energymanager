@@ -12,3 +12,14 @@
         {% set p2 = states('sensor.SECONDARY_PV_POWER_2') | float(0) %}
         {% set p3 = states('sensor.SECONDARY_PV_POWER_3') | float(0) %}
         {{ (p1 + p2 + p3) | round(0) }}
+
+    - name: "Additional Battery Power"
+      unique_id: em_additional_battery_power_total
+      unit_of_measurement: W
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set b1 = states('sensor.SECONDARY_BATTERY_POWER_1') | float(0) %}
+        {% set b2 = states('sensor.SECONDARY_BATTERY_POWER_2') | float(0) %}
+        {% set b3 = states('sensor.SECONDARY_BATTERY_POWER_3') | float(0) %}
+        {{ (b1 + b2 + b3) | round(0) }}
