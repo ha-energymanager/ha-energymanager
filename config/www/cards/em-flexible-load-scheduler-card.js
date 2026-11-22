@@ -951,9 +951,9 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const battery = siteCapacity && intervals.every(row =>
       [row.startSoc, row.endSoc, row.floor].every(value => value !== null && value <= 100)) ?
       { capacity: siteCapacity, chargeEfficiency, dischargeEfficiency } : null;
-    const schedule = recommend(intervals, workloads.filter(row => !row.problem && !row.repeat), battery);
-    this._renderSchedule(workloads, schedule, intervals, battery, timeZone, now);
-    this._renderApproval(workloads, schedule, intervals.at(-1).end, now);
+    const schedule = recommend(intervals, loads.filter(row => !row.problem && !row.repeat), battery);
+    this._renderSchedule(loads, schedule, intervals, battery, timeZone, now);
+    this._renderApproval(loads, schedule, intervals.at(-1).end, now);
     this._get("status").hidden = true;
     this._get("schedule").hidden = false;
   }
