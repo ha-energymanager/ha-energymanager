@@ -4,21 +4,22 @@
 <summary><strong>2.1.0 - 2026-12-xx</strong></summary>
 
 ### Added
+* Flexible Load Scheduler
 * FoxESS Support
 * PV Dashboard update
   * Profiles have been replaced with tabs
   * Up to eight tabs can be created for different views
   * Individual Home Assistant users get their own PV Dashboard tabs
-* Deferred Workloads Planner and Scheduler
+* New dashboard cards, hidden by default
+  * Energy Consumption
+  * Battery Level Bar
+  * Battery Outlook
+  * System Limits
+  * Solar Headroom
+  * Daily Plan Recap
+  * Solar Performance
+  * BOM Rain Radar
 * Marketplace Config-template-card, used for Energy Consumption Card on dashboard
-* Energy Consumption Card as new card in dashboard, hidden by default
-* Battery Level Bar as new card in dashboard, hidden by default
-* Battery outlook card
-* System Limits card
-* Solar Headroom card
-* Daily Plan Recap card
-* Solar Performance card
-* BOM Rain Radar as new card in dashboard, hidden by default
 * BatteryLedger added from Roving-Ronin/BatteryLedger
 * Support for custom Marketplace repositories
 * Two new entities to track system purchase cost
