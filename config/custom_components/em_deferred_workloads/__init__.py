@@ -249,6 +249,7 @@ class Scheduler:
             "supports_edit": True,
             "supports_edit_preview": True,
             "supports_clear_completed": True,
+            "supports_forecast_repeats": True,
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -468,8 +469,9 @@ class Scheduler:
             return None
         if job["run_date"] != datetime.fromtimestamp(now, self.schedule_zone()).date().isoformat():
             return None
-        latest = job["approval"]["start"] if job["timing"] == "fixed" else job["deadline"] - job["duration"]
-        return latest if latest is not None and now < latest else None
+        locked = job["approval"]["start"] if job["timing"] == "fixed" else None
+        latest = locked if locked is not None else job["deadline"] - job["duration"]
+        return latest if now < latest else None
 
     async def unskip(self, job_id):
         async with self.lock:
@@ -477,7 +479,7 @@ class Scheduler:
             if job is None or self.unskip_until(job, self.repeats, time()) is None:
                 raise vol.Invalid("This run can no longer be restored for today.")
             jobs = deepcopy(self.jobs)
-            if job["timing"] == "fixed":
+            if job["timing"] == "fixed" and job["approval"]["start"] is not None:
                 jobs[job_id].update(status="scheduled", start=job["approval"]["start"], note="")
             else:
                 jobs[job_id].update(status="delayed", start=None, note="Waiting for a suitable window.")
@@ -514,9 +516,7 @@ class Scheduler:
         if not days or len(set(days)) != len(days) or any(type(day) is not int or not 0 <= day <= 6 for day in days):
             raise vol.Invalid(f"Choose distinct weekdays for {name}.")
         finish = read_clock(repeat["finish_by"])
-        fixed = item["timing"] == "fixed"
-        start = read_clock(repeat.get("start_at", "")) if fixed else 0
-        if finish is None or start is None or (finish - start) * 60 < item["duration"]:
+        if finish is None or finish * 60 < item["duration"]:
             raise vol.Invalid(f"{name} needs enough time to finish on each selected day.")
         repeats[item["id"]] = dict(
             id=item["id"], approval=deepcopy(item), created=now,
@@ -539,20 +539,17 @@ class Scheduler:
                 continue
 
             deadline = local_timestamp(day, rule["finish_by"], zone)
-            fixed = item["timing"] == "fixed"
-            start = local_timestamp(day, rule["start_at"], zone) if fixed else None
             duration = item["duration"]
-            latest = None if deadline is None else (start if fixed else deadline - duration)
-            valid = (deadline is not None and (start is not None if fixed else True)
-                     and (start if fixed else midnight) + duration <= deadline)
+            latest = deadline - duration if deadline is not None else None
+            valid = latest is not None and midnight <= latest
             entry["last_date"] = day_key
             # Approving after today's latest start takes effect on the next selected day.
             if valid and day_key == entry["approved_on"] and latest < entry["created"]:
                 continue
 
             child_id = str(uuid5(UUID(entry["id"]), day_key))
-            note = ""
-            status = "scheduled" if fixed else "delayed"
+            note = "Waiting for a suitable window."
+            status = "delayed"
             if not valid:
                 status, note = "skipped", "Local clock change left no valid time for this run."
             elif now - latest > START_GRACE:
@@ -560,9 +557,9 @@ class Scheduler:
             jobs[child_id] = dict(
                 id=child_id, repeat_id=entry["id"], run_date=day_key,
                 name=item["name"], power=item["power"], duration=duration, source=item["source"],
-                timing=item["timing"], policy=item["policy"], start=start, deadline=deadline or midnight,
+                timing=item["timing"], policy=item["policy"], start=None, deadline=deadline or midnight,
                 start_automation=item["start_automation"], stop_automation=item["stop_automation"],
-                approval={"start": start}, created=now, actual_start=None, stop_at=None,
+                approval={"start": None}, created=now, actual_start=None, stop_at=None,
                 status=status, note=note, start_failed=False,
             )
         return datetime.combine(day + timedelta(days=1), clock_time.min, zone).timestamp()
@@ -659,8 +656,8 @@ class Scheduler:
         self.hass.async_create_background_task(self.trigger(job_id, phase), f"{DOMAIN} {phase} {job_id}")
 
     async def plan_pending(self, jobs, pending, now, dispatch, remaining):
-        fixed = [job for job in pending if job["timing"] == "fixed"]
-        flexible = [job for job in pending if job["timing"] == "flexible"]
+        fixed = [job for job in pending if job["timing"] == "fixed" and job["approval"]["start"] is not None]
+        unplanned = [job for job in pending if job["timing"] == "flexible" or job["approval"]["start"] is None]
         active = [self.reservation(job) for job in jobs.values()
                   if job["status"] in {"starting", "running", "stopping", "stop_failed"}]
         # Include the saved start in the search when the timer fires a few seconds late.
@@ -696,7 +693,7 @@ class Scheduler:
             active.append(self.reservation(job))
 
         reserved = active + [self.reservation(job) for job in fixed if job["status"] in PENDING]
-        urgent = [job for job in flexible if job["policy"] == "must"
+        urgent = [job for job in unplanned if job["policy"] == "must"
                   and job["deadline"] - job["duration"] <= now]
         for job in urgent:
             latest = job["deadline"] - job["duration"]
@@ -709,10 +706,10 @@ class Scheduler:
                 self.mark_start(job, now, dispatch, "Latest start reached. Grid energy may be used.")
                 reserved.append(self.reservation(job))
 
-        flexible = [job for job in flexible if job["status"] in PENDING]
+        unplanned = [job for job in unplanned if job["status"] in PENDING]
         starts = await self.hass.async_add_executor_job(
-            recommend, intervals, flexible, reserved, capacity, *efficiencies) if intervals and flexible else {}
-        for job in sorted(flexible, key=lambda job: starts.get(job["id"], float("inf"))):
+            recommend, intervals, unplanned, reserved, capacity, *efficiencies) if intervals and unplanned else {}
+        for job in sorted(unplanned, key=lambda job: starts.get(job["id"], float("inf"))):
             latest = job["deadline"] - job["duration"]
             start = starts.get(job["id"])
             if start is not None and start <= now:
