@@ -11,7 +11,21 @@ automation:
       - action: solcast_solar.update_forecasts
         data: {}
     mode: single
-
+  - id: "boost_disable"
+    alias: Turn off boost enabled at midnight
+    description: Ensures input_boolean.boost_enabled is turned off at 00:00:00 daily.
+    triggers:
+      - trigger: time
+        at: "00:00:00"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.boost_enabled
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.boost_enabled
+    mode: single
   - id: foxess_connection_lost
     alias: "FoxESS: Connection Lost"
     description: "Notify when the FoxESS WebSocket connection is lost"
