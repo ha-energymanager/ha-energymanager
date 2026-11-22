@@ -538,7 +538,6 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
               <label>Repeat<select data-field="cadence">
                 <option value="once">Once-off</option><option value="repeated">Repeated</option>
               </select></label>
-              <label class="repeat-start" hidden>Start at<input data-field="start_at" type="time" step="60"></label>
               <fieldset class="repeat-days" hidden>
                 <legend>Run on</legend>
                 <div class="weekday-options"></div>
@@ -616,12 +615,13 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
               workloads require it. For a new once-off run, the card uses the next occurrence of that local time.</li>
             <li><strong>Start automation</strong> is required. <strong>Stop automation</strong> runs after the duration.
               Leave it blank when the appliance finishes on its own.</li>
-            <li><strong>Fixed</strong> keeps the approved start. <strong>Flexible</strong> can move the start as the forecast changes.</li>
+            <li><strong>Fixed</strong> keeps the first suitable start the scheduler selects for that occurrence.
+              <strong>Flexible</strong> can move the start as the forecast changes.</li>
             <li><strong>May be deferred</strong> can skip the run if its power source is unavailable at the fixed start or no suitable
               window is found by the latest start. <strong>Must run</strong> can use grid power if needed and still respects
               the selected automation’s conditions.</li>
             <li><strong>Once-off</strong> runs once. <strong>Repeated</strong> runs on the selected weekdays.
-              A fixed repeat also asks for a <strong>Start at</strong> time.</li>
+              The scheduler chooses a start that fits before <strong>Finish by</strong> on each selected day.</li>
           </ul>
           <p><strong>Example</strong> To run a pool pump for four hours on selected days, set the duration to 240 minutes and
             <strong>Finish by</strong> to 4 pm. Choose <strong>Repeated</strong>, <strong>Flexible</strong>,
@@ -727,7 +727,6 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       }
       const repeated = input("enabled").checked && input("cadence").value === "repeated";
       row.querySelector(".repeat-days").hidden = !repeated;
-      row.querySelector(".repeat-start").hidden = !repeated || input("timing").value !== "fixed";
       row.querySelector(".deadline-label").textContent = repeated || job ? "Finish by" : "Finish by (optional)";
       clearTimeout(this._editTimer);
       this._editTimer = setTimeout(() => this._render(), 200);
@@ -744,7 +743,6 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       input("enabled").closest("label").hidden = true;
       input("cadence").closest("label").hidden = true;
       row.querySelector(".automation-options").hidden = false;
-      row.querySelector(".repeat-start").hidden = true;
       row.querySelector(".deadline-label").textContent = "Finish by";
       input("deadline").value = localDateTime(job.deadline * 1000, timeZone).slice(11);
       input("minutes").value = job.duration / 60;
@@ -849,7 +847,6 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       const repeat = repeated ? {
         days: Array.from(row.querySelectorAll(".weekday-options input:checked"), input => Number(input.value)),
         finish_by: deadlineValue,
-        ...(timing === "fixed" ? { start_at: value("start_at") } : {}),
       } : null;
       const edit = this._editing?.job;
       const finishDate = edit ? localDateTime(edit.deadline * 1000, timeZone).slice(0, 10) : null;
@@ -863,11 +860,9 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         }
       } else if (repeat) {
         const finish = clockMinutes(repeat.finish_by);
-        const start = timing === "fixed" ? clockMinutes(repeat.start_at) : 0;
         if (!repeat.days.length) problem = "Select at least one weekday.";
         else if (finish === null) problem = "Choose a finish-by time.";
-        else if (start === null) problem = "Choose a fixed start time.";
-        else if (finish - start < minutes) problem = "The run must fit within the selected day.";
+        else if (finish < minutes) problem = "The run must fit within the selected day.";
       } else if (deadlineValue && deadline === null) {
         problem = "Choose a valid finish time in " + (timeZone ?? "your local timezone") + ".";
       } else if (deadline !== null && deadline < earliest + minutes * minute) {
@@ -1085,7 +1080,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       } else if (row.duration > 24 * hour || row.power > 1000) {
         issues.push(label + "Use a duration up to 24 hours and power up to 1,000 kW.");
       } else if (row.repeat) {
-        if (!Array.isArray(backend?.repeats)) issues.push(label + "Update the Home Assistant scheduler to enable repeated runs.");
+        if (!backend?.supports_forecast_repeats) issues.push(label + "Update the Home Assistant scheduler to enable repeated runs.");
         else jobs.push({ rowId: row.id, data: {
           name: row.name, power: row.power, duration: row.duration / 1000, source: row.source,
           timing: row.timing, policy: row.policy, repeat: row.repeat,
@@ -1227,7 +1222,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       const detail = document.createElement("small");
       const days = rule.days.length === 7 ? "Every day" : [...rule.days].sort((a, b) => a - b)
         .map(day => weekdays[day].slice(0, 3)).join(", ");
-      detail.textContent = days + " · " + (rule.start_at ? "Start " + rule.start_at + " · " : "") +
+      detail.textContent = days + " · " +
         "Finish by " + rule.finish_by + " · " + entry.approval.duration / 60 + " min";
       summary.append(title, detail);
       item.append(summary);
