@@ -481,7 +481,18 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         #edit-impact table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
         #edit-impact th, #edit-impact td { padding: 6px; text-align: start; border-bottom: 1px solid var(--planner-line);
           vertical-align: top; overflow-wrap: anywhere; }
+        #edit-impact thead th { background: var(--planner-approved-bg); }
+        #edit-impact td[data-changed] {
+          background: color-mix(in srgb, var(--primary-color, #3b80bd) 13%, var(--planner-card-bg));
+          font-weight: 600;
+        }
         #edit-impact-note, #edit-impact-delta { margin-top: 6px; }
+        #edit-impact-note[data-fallback] {
+          padding: 8px 10px;
+          border-inline-start: 3px solid var(--planner-solar);
+          background: color-mix(in srgb, var(--planner-solar) 11%, var(--planner-card-bg));
+          color: var(--planner-text);
+        }
         #approval { margin-top: 10px; }
         #approval button { border-color: var(--primary-color, #03a9f4); font-weight: 600; }
         button:disabled { opacity: 0.55; cursor: default; }
@@ -606,10 +617,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           <p id="effects" class="muted" hidden></p>
         </section>
         <section id="edit-impact" aria-labelledby="edit-impact-title" hidden>
-          <h3 id="edit-impact-title">Forecast impact of changes</h3>
+          <h3 id="edit-impact-title">Forecast impact</h3>
           <p id="edit-impact-note" class="muted" role="status"></p>
           <table id="edit-impact-table" hidden>
-            <thead><tr><th scope="col">Estimate</th><th scope="col">Current booking</th><th scope="col">Proposed change</th></tr></thead>
+            <thead><tr><th scope="col">Estimate</th><th scope="col">Current schedule</th><th scope="col">With your edits</th></tr></thead>
             <tbody id="edit-impact-rows"></tbody>
           </table>
           <p id="edit-impact-delta" hidden></p>
@@ -1003,6 +1014,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const delta = this._get("edit-impact-delta");
     table.hidden = true;
     delta.hidden = true;
+    note.removeAttribute("data-fallback");
     if (!draft || !this._backend?.supports_edit_preview) {
       edit.preview = null;
       note.textContent = draft ? "Update the load scheduler to preview and save changes." :
@@ -1032,6 +1044,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     }
     const { result, error } = edit.preview;
     note.textContent = error || result?.message || (result ? "" : "Checking the energy forecast…");
+    if (result && typeof result.changed !== "boolean") {
+      note.textContent = "Restart Home Assistant with the updated load scheduler to compare schedules.";
+      this._approval = null;
+      this._get("approve").disabled = true;
+      return;
+    }
     if (!result?.can_save) {
       this._approval = null;
       this._get("approve").disabled = true;
@@ -1040,7 +1058,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     this._showEditComparison(result);
   }
 
-  _showEditComparison({ current, proposed }) {
+  _showEditComparison({ current, proposed, changed, message }) {
     const locale = this._hass.language || undefined;
     const time = new Intl.DateTimeFormat(locale, {
       weekday: "short", hour: "numeric", minute: "2-digit", timeZone: this._hass.config?.time_zone || undefined,
@@ -1049,7 +1067,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const money = new Intl.NumberFormat(locale, {
       style: "currency", currency: this._hass.config?.currency || "AUD", currencyDisplay: "narrowSymbol",
     });
-    const window = booking => booking.start === null ? "No start scheduled" :
+    const window = booking => booking.start === null ? "No start forecast" :
       time.format(booking.start * 1000) + " – " + time.format(booking.end * 1000);
     const cost = (booking, field) => booking.impact?.[field] == null ? "Unavailable" : money.format(booking.impact[field]);
     const mix = booking => {
@@ -1060,11 +1078,41 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         .map(([key, label]) => number.format(amounts[key]) + " kWh " + label).join(" · ");
     };
     const grid = booking => booking.impact ? number.format(booking.impact.grid) + " kWh" : "Unavailable";
+    const source = new Map(sources);
+    const outcome = {
+      forecast: "Fits the selected power source",
+      fixed: "Starts at the saved time",
+      latest_start: "Must run · battery or grid may be used",
+      fixed_must: "Must run at the fixed time · battery or grid may be used",
+      fixed_at_risk: "May be skipped if the forecast cannot cover the fixed start",
+      conflict: "Overlaps another load using the same automation",
+      no_window: "No time fits the selected settings",
+      no_forecast: "Waiting for an up-to-date forecast",
+    };
+    const note = this._get("edit-impact-note");
+    const fallback = ["latest_start", "fixed_must"].includes(proposed.outcome);
+    if (fallback) {
+      const start = time.format(proposed.start * 1000);
+      const reason = proposed.outcome === "fixed_must" ? " (the fixed start time)" :
+        " if no suitable time opens up before then";
+      const subject = changed ? "With your edits, Must run can start this load at " :
+        "Your current schedule already allows Must run to start this load at ";
+      note.textContent = subject + start + reason + ". Battery or grid power may cover the shortfall." +
+        (changed ? "" : " No changes are needed.") + (message ? " " + message : "");
+      note.setAttribute("data-fallback", "");
+    } else {
+      note.textContent = message || (changed ? "" : "No changes to save.");
+    }
     const rows = this._get("edit-impact-rows");
     rows.replaceChildren();
     for (const [label, format] of [
-      ["Run window", window],
       ["Finish by", booking => time.format(booking.deadline * 1000)],
+      ["Power source preference", booking => source.get(booking.source)],
+      ["Timing", booking => booking.timing === "fixed" ? "Fixed" : "Flexible"],
+      ["If the forecast changes", booking => booking.policy === "must" ? "Must run" : "May be deferred"],
+      ["Power and duration", booking => number.format(booking.power) + " kW · " + booking.duration / 60 + " min"],
+      ["Expected run time", window],
+      ["How it would run", booking => outcome[booking.outcome]],
       ["Load energy mix", mix],
       ["Additional site grid use", grid],
       ["Battery energy change at forecast end", booking => booking.impact?.deficit != null ?
@@ -1078,15 +1126,18 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       heading.scope = "row";
       heading.textContent = label;
       row.append(heading);
-      for (const booking of [current, proposed]) {
-        const cell = document.createElement("td");
-        cell.textContent = format(booking);
-        row.append(cell);
-      }
+      const before = format(current);
+      const after = format(proposed);
+      const savedCell = document.createElement("td");
+      savedCell.textContent = before;
+      const draftCell = document.createElement("td");
+      draftCell.textContent = after;
+      if (after !== before) draftCell.setAttribute("data-changed", "");
+      row.append(savedCell, draftCell);
       rows.append(row);
     }
     this._get("edit-impact-table").hidden = false;
-    if (current.impact?.total_cost != null && proposed.impact?.total_cost != null) {
+    if (changed && current.impact?.total_cost != null && proposed.impact?.total_cost != null) {
       const diff = proposed.impact.total_cost - current.impact.total_cost;
       const delta = this._get("edit-impact-delta");
       delta.hidden = false;
@@ -1179,8 +1230,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     this._get("approve").disabled = Boolean(issues.length) || Boolean(this._saving);
     this._get("approve").textContent = edit ? "Save changes" : enabled.some(row => row.repeat) ? "Save schedule" :
       enabled.length === 1 ? "Schedule load" : "Schedule " + enabled.length + " loads";
-    this._get("approval-note").textContent = issues.join(" ") || (edit ?
-      "The scheduler picks a new start when you save. Fixed runs keep that start time." : enabled.some(row => row.policy === "must") ?
+    this._get("approval-note").textContent = issues.join(" ") || (edit ? "" :
+      enabled.some(row => row.policy === "must") ?
       "Must run can use grid energy. A Flexible run may move up to its latest start." :
       "Home Assistant will run this schedule when the dashboard is closed.");
   }
