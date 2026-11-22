@@ -54,7 +54,8 @@ template:
                 {% endif %}
                 {% set active = none %}
               {% endif %}
-              {% if active is not mapping and ts == start %}
+              {% if active is not mapping and start <= ts <= end %}
+                {% set start = ts %}
                 {% set plan = state_attr(plan_entity, 'energy_plan') %}
                 {% set rows = plan.get('timeline', []) if plan is mapping and has_value(plan_entity) else [] %}
                 {% set meta = plan.get('meta', {}) if plan is mapping else {} %}
