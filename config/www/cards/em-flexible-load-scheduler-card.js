@@ -605,10 +605,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
             <ul id="history-list"></ul>
           </div>
         </section>
-        <details id="workload-guide" open>
-          <summary>How to schedule a workload</summary>
+        <details id="load-guide" open>
+          <summary>How to schedule a load</summary>
           <ol>
-            <li>Select <strong>Add workload</strong> or use the first row. Enter a name, power in kW, and duration in minutes.
+            <li>Select <strong>Add load</strong> or use the first row. Enter a name, power in kW, and duration in minutes.
               For example, a 1,500 W dryer is 1.5 kW.</li>
             <li>Choose a <strong>Power source</strong> and, if needed, a <strong>Finish by</strong> time.</li>
             <li>Turn on <strong>Enable schedule</strong>. Select the Home Assistant automation that starts the appliance,
@@ -628,7 +628,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           <h4>Timing and automation settings</h4>
           <ul>
             <li><strong>Finish by</strong> is the latest time the run should end. Repeats and flexible <strong>Must run</strong>
-              workloads require it. For a new once-off run, the card uses the next occurrence of that local time.</li>
+              loads require it. For a new once-off run, the card uses the next occurrence of that local time.</li>
             <li><strong>Start automation</strong> is required. <strong>Stop automation</strong> runs after the duration.
               Leave it blank when the appliance finishes on its own.</li>
             <li><strong>Fixed</strong> keeps the first suitable start the scheduler selects for that occurrence.
@@ -643,17 +643,17 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
             <strong>Finish by</strong> to 4 pm. Choose <strong>Repeated</strong>, <strong>Flexible</strong>,
             <strong>Must run</strong> and <strong>Grid allowed</strong>. The planner looks for a suitable window and can start by noon
             if grid power is needed.</p>
-          <p>Under <strong>Approved workloads</strong>, use <strong>Edit</strong> or <strong>Edit today</strong> to preview changes
-            before saving. <strong>Clear completed runs</strong> removes finished entries from <strong>Recent workload runs</strong>.</p>
+          <p>Under <strong>Approved loads</strong>, use <strong>Edit</strong> or <strong>Edit today</strong> to preview changes
+            before saving. <strong>Clear completed runs</strong> removes finished entries from <strong>Recent load runs</strong>.</p>
         </details>
       </ha-card>`;
-    this._get("add").addEventListener("click", () => this._addWorkload(false, true));
+    this._get("add").addEventListener("click", () => this._addLoad(false, true));
     this._get("approve").addEventListener("click", () => this._approve());
     this._get("cancel-edit").addEventListener("click", () => this._endEdit());
     for (const status of ["cancelled", "completed"]) {
       this._get("clear-" + status).addEventListener("click", event => this._clearHistory(event.currentTarget, status));
     }
-    this._addWorkload(true);
+    this._addLoad(true);
   }
 
   setConfig(config = {}) {
@@ -668,7 +668,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       entity: config.entity ?? defaultEntity,
       capacityEntity: config.battery_capacity_entity ?? defaultCapacityEntity,
       capacity: nonnegative(config.battery_capacity_kwh),
-      title: config.name ?? "Deferred Workloads Planner and Scheduler",
+      title: config.name ?? "Flexible Load Scheduler",
       maxAge: maxAge * minute,
       chargeEfficiency,
       dischargeEfficiency,
@@ -711,7 +711,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
 
   _get(id) { return this.shadowRoot.getElementById(id); }
 
-  _addWorkload(defaults = false, focus = false, job = null) {
+  _addLoad(defaults = false, focus = false, job = null) {
     const row = this._get("editor").content.firstElementChild.cloneNode(true);
     row.dataset.id = String(this._nextId++);
     const input = field => row.querySelector(`[data-field="${field}"]`);
@@ -781,7 +781,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     for (const row of this._get("editors").children) row.hidden = true;
     this._get("add").hidden = true;
     this._actionStatus("Editing " + job.name + (job.repeat_id ? " for this occurrence." : "."));
-    this._addWorkload(false, true, job);
+    this._addLoad(false, true, job);
     this._editing.row.scrollIntoView({ block: "nearest" });
   }
 
@@ -853,7 +853,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     });
   }
 
-  _readWorkloads(timeZone, now, earliest) {
+  _readLoads(timeZone, now, earliest) {
     const rows = this._editing ? [this._editing.row] : Array.from(this._get("editors").children);
     return rows.map((row, index) => {
       const value = field => row.querySelector(`[data-field="${field}"]`).value;
@@ -885,10 +885,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       } else if (deadlineValue && deadline === null) {
         problem = "Choose a valid finish time in " + (timeZone ?? "your local timezone") + ".";
       } else if (deadline !== null && deadline < earliest + minutes * minute) {
-        problem = "The workload cannot finish by this deadline.";
+        problem = "The load cannot finish by this deadline.";
       }
       return {
-        id: Number(row.dataset.id), name: value("name").trim() || "Workload " + (index + 1),
+        id: Number(row.dataset.id), name: value("name").trim() || "Load " + (index + 1),
         power, duration: minutes * minute, deadline,
         source: value("source"),
         enabled, timing, repeat,
@@ -912,7 +912,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       const now = Date.now();
       this._get("status").hidden = true;
       this._get("schedule").hidden = true;
-      this._renderApproval(this._readWorkloads(this._hass.config?.time_zone || undefined, now, now), { jobs: [] }, null, now);
+      this._renderApproval(this._readLoads(this._hass.config?.time_zone || undefined, now, now), { jobs: [] }, null, now);
       this._renderEditPreview(now);
       return;
     }
@@ -922,8 +922,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     const generated = Date.parse(plan?.meta?.generated_at ?? plan?.summary?.ts);
     const timeZone = this._hass?.config?.time_zone || undefined;
     const showStatus = message => {
-      const workloads = this._readWorkloads(timeZone, now, now);
-      this._renderApproval(workloads, { jobs: [] }, null, now);
+      const loads = this._readLoads(timeZone, now, now);
+      this._renderApproval(loads, { jobs: [] }, null, now);
       this._get("status").textContent = message;
       this._get("status").hidden = false;
       this._get("schedule").hidden = true;
@@ -942,9 +942,9 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       showStatus("The energy plan has no upcoming usable forecast intervals.");
       return;
     }
-    const workloads = this._readWorkloads(timeZone, now, intervals[0].from);
-    if (!workloads.length) {
-      showStatus("Add a workload to see suggested times.");
+    const loads = this._readLoads(timeZone, now, intervals[0].from);
+    if (!loads.length) {
+      showStatus("Add a load to see suggested times.");
       return;
     }
     const siteCapacity = capacity || nonnegative(this._hass.states?.[capacityEntity]?.state);
@@ -968,7 +968,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     delta.hidden = true;
     if (!draft || !this._backend?.supports_edit_preview) {
       edit.preview = null;
-      note.textContent = draft ? "Update the workload scheduler to preview and save changes." :
+      note.textContent = draft ? "Update the load scheduler to preview and save changes." :
         "Enter valid settings to see their forecast impact.";
       this._approval = null;
       this._get("approve").disabled = true;
@@ -1028,7 +1028,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     for (const [label, format] of [
       ["Run window", window],
       ["Finish by", booking => time.format(booking.deadline * 1000)],
-      ["Workload energy mix", mix],
+      ["Load energy mix", mix],
       ["Additional site grid use", grid],
       ["Battery energy change at forecast end", booking => booking.impact?.deficit != null ?
         number.format(-booking.impact.deficit || 0) + " kWh" : "Unavailable"],
@@ -1058,8 +1058,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     }
   }
 
-  _renderApproval(workloads, schedule, horizon, now) {
-    const enabled = workloads.filter(row => row.enabled);
+  _renderApproval(loads, schedule, horizon, now) {
+    const enabled = loads.filter(row => row.enabled);
     this._get("approval").hidden = !enabled.length;
     if (!enabled.length) return;
     const backend = this._backend;
@@ -1067,10 +1067,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     const proposed = new Map(schedule.jobs.map(row => [row.id, row.start]));
     const issues = [];
     if (!backend) {
-      issues.push(this._subscription?.failed ? "Install or restart the Home Assistant workload scheduler." :
-        "Connecting to the Home Assistant workload scheduler.");
+      issues.push(this._subscription?.failed ? "Install or restart the Home Assistant load scheduler." :
+        "Connecting to the Home Assistant load scheduler.");
     } else {
-      if (!backend.automation_exclusions) issues.push("Update the Home Assistant workload scheduler.");
+      if (!backend.automation_exclusions) issues.push("Update the Home Assistant load scheduler.");
       const config = backend.config;
       if (config.entity !== entity || config.battery_capacity_entity !== capacityEntity ||
           (config.battery_capacity_kwh ?? null) !== (capacity || null) ||
@@ -1128,7 +1128,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         });
       }
     }
-    if (jobs.length > 12) issues.push("Approve up to 12 workloads at a time.");
+    if (jobs.length > 12) issues.push("Approve up to 12 loads at a time.");
     if (!issues.length) this._approval = jobs;
     this._get("approve").disabled = Boolean(issues.length) || Boolean(this._saving);
     this._get("approve").textContent = edit ? "Save changes" : enabled.some(row => row.repeat) ? "Approve schedule" :
@@ -1313,7 +1313,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     }
   }
 
-  _renderSchedule(workloads, schedule, intervals, battery, timeZone, now) {
+  _renderSchedule(loads, schedule, intervals, battery, timeZone, now) {
     const last = intervals.at(-1);
     const locale = this._hass.language || undefined;
     const clock = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone });
@@ -1329,7 +1329,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     const list = this._get("recommendations");
     list.replaceChildren();
     const rows = [...schedule.jobs.sort((a, b) => a.start - b.start || a.id - b.id),
-      ...workloads.filter(row => !jobs.has(row.id))];
+      ...loads.filter(row => !jobs.has(row.id))];
     for (const row of rows) {
       const item = document.createElement("li");
       const title = document.createElement("strong");
@@ -1383,7 +1383,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
       notes.push("Battery at forecast end " + number.format(endSoc) + "% vs " + number.format(last.endSoc) + "% planned.");
       if (endSoc <= last.minSoc + 0.1) notes.push("Further grid use beyond the forecast is possible.");
     }
-    if (!battery && workloads.some(row => row.source !== "solar")) {
+   if (!battery && loads.some(row => row.source !== "solar")) {
       notes.push("Battery discharge and charging diversion require capacity and state-of-charge forecast data.");
     }
     const effects = this._get("effects");
@@ -1393,11 +1393,11 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
 }
 
 if (!customElements.get(cardType)) {
-  customElements.define(cardType, EmDeferredWorkloadsPlannerCard);
+  customElements.define(cardType, EmFlexibleLoadSchedulerCard);
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: cardType,
-    name: "Deferred Workloads Planner",
-    description: "Plan and schedule workloads using the Energy Manager forecast.",
+    name: "Flexible Load Scheduler",
+    description: "Plan and schedule loads using the Energy Manager forecast.",
   });
 }
