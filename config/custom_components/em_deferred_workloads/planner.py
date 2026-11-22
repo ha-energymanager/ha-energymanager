@@ -1,4 +1,4 @@
-"""Server-side forecast replay for approved workloads, using epoch seconds."""
+"""Server-side forecast replay for approved loads, using epoch seconds."""
 
 from collections.abc import Mapping
 from datetime import datetime
@@ -259,7 +259,6 @@ def overlaps(candidate, placements):
 
 
 def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff):
-    """Replan pending flexible workloads around fixed and already-started runs."""
     if not intervals or not jobs:
         return {}
 
