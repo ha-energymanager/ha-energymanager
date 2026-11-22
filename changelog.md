@@ -10,6 +10,7 @@
   * Profiles have been replaced with tabs
   * Up to eight tabs can be created for different views
   * Individual Home Assistant users get their own PV Dashboard tabs
+* Power Boost enhancement
 * New dashboard cards, hidden by default
   * Energy Consumption
   * Battery Level Bar
@@ -19,6 +20,7 @@
   * Daily Plan Recap
   * Solar Performance
   * BOM Rain Radar
+  * Power Boost
 * Marketplace Config-template-card, used for Energy Consumption Card on dashboard
 * BatteryLedger added from Roving-Ronin/BatteryLedger
 * Support for custom Marketplace repositories
