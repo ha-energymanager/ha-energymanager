@@ -26,12 +26,12 @@ lovelace:
       icon: mdi:car-electric
       show_in_sidebar: true
       filename: dashboards/energy_manager_ev.yaml
-    energy-deferred:
+    energy-scheduler:
       mode: yaml
-      title: "Deferred Loads"
+      title: "Scheduler"
       icon: mdi:calendar-clock
       show_in_sidebar: true
-      filename: dashboards/energy_manager_deferred.yaml     
+      filename: dashboards/energy_manager_scheduler.yaml    
     grafana-energy:
       mode: yaml
       title: Grafana
