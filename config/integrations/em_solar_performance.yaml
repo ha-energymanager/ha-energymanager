@@ -40,7 +40,7 @@ template:
 
             {% if previous is not mapping or previous.get('date') != date %}
               {% if previous is mapping %}
-                {% set close_ok = midnight and previous.date == yesterday and 0 < ts - previous.last_sample <= 360 %}
+                {% set close_ok = midnight and previous.date == yesterday %}
                 {% set complete = close_ok and meter is not none and previous.last_meter is not none
                     and previous.opening_meter is not none and meter >= previous.last_meter
                     and meter >= previous.opening_meter and 'meter_gap' not in previous.flags
@@ -74,7 +74,7 @@ template:
             {% endif %}
 
             {% set quality = namespace(flags=previous.flags) %}
-            {% if meter is none or ts - previous.last_sample > 360 %}
+            {% if meter is none %}
               {% set quality.flags = quality.flags + ['meter_gap'] %}
             {% elif previous.last_meter is not none and meter < previous.last_meter %}
               {% set quality.flags = quality.flags + ['meter_reset'] %}
