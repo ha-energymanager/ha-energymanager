@@ -393,40 +393,81 @@ class Scheduler:
             raise vol.Invalid("The edited occurrence must fit on its original day.")
         return original
 
-    async def plan_edit(self, item, now):
+    def edit_forecast(self, item, now):
         intervals, capacity = self.forecast(ceil((now + 1) / 60) * 60, now)
         reserved = self.approved_windows(self.jobs, item["id"])
         args = capacity, self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"]
+        return intervals, reserved, args
+
+    async def find_edit_start(self, item, intervals, reserved, args):
         starts = await self.hass.async_add_executor_job(
             recommend, intervals, [item], reserved, *args,
         ) if intervals else {}
         start = starts.get(item["id"])
-        return (ceil(start) if start is not None else None), intervals, reserved, args
+        return ceil(start) if start is not None else None
+
+    async def estimate_edit_schedule(self, job, intervals, reserved, args, *, saved=False):
+        fixed_start = job["approval"]["start"] if saved and job["timing"] == "fixed" else None
+        start = fixed_start
+        if start is None:
+            start = await self.find_edit_start(job, intervals, reserved, args)
+
+        fallback = start is None and job["policy"] == "must" and (saved or job["timing"] == "flexible")
+        if fallback:
+            start = job["deadline"] - job["duration"]
+
+        end = None if start is None else start + job["duration"]
+        impact = None
+        outcome = "no_window" if intervals else "no_forecast"
+        if start is not None:
+            window = dict(job, start=start, end=end)
+            if overlaps(window, reserved):
+                outcome = "conflict"
+            else:
+                source = "grid" if fallback else job["source"]
+                impact = await self.hass.async_add_executor_job(
+                    edit_impact, intervals, dict(window, source=source), reserved, *args,
+                ) if intervals else None
+                if fallback:
+                    outcome = "latest_start"
+                elif fixed_start is None:
+                    outcome = "forecast"
+                elif impact is not None:
+                    outcome = "fixed"
+                elif job["policy"] == "must":
+                    outcome = "fixed_must"
+                    impact = await self.hass.async_add_executor_job(
+                        edit_impact, intervals, dict(window, source="grid"), reserved, *args,
+                    ) if intervals else None
+                else:
+                    outcome = "fixed_at_risk"
+
+        return dict(start=start, end=end, deadline=job["deadline"], power=job["power"],
+                    duration=job["duration"], source=job["source"], timing=job["timing"],
+                    policy=job["policy"], outcome=outcome, impact=impact)
 
     async def make_edit_preview(self, item, original, now):
-        start, intervals, reserved, args = await self.plan_edit(item, now)
-        fixed = item["timing"] == "fixed"
-        fallback = start is None and not fixed and item["policy"] == "must"
-        if fallback:
-            start = item["deadline"] - item["duration"]
+        intervals, reserved, args = self.edit_forecast(item, now)
+        changed = any(item[key] != original[key] for key in (
+            "name", "power", "duration", "deadline", "source", "timing", "policy",
+            "start_automation", "stop_automation",
+        ))
+        current = await self.estimate_edit_schedule(original, intervals, reserved, args, saved=True)
+        proposed = await self.estimate_edit_schedule(item, intervals, reserved, args) if changed else current
 
-        async def summary(job, start, source):
-            impact = await self.hass.async_add_executor_job(
-                edit_impact, intervals, dict(job, start=start, source=source), reserved, *args,
-            ) if intervals and start is not None else None
-            return dict(start=start, end=None if start is None else start + job["duration"],
-                        deadline=job["deadline"], impact=impact)
-
-        current = await summary(original, original["start"], original["source"])
-        proposed = await summary(item, start, "grid" if fallback else item["source"])
         message = ""
-        if not intervals:
+        if proposed["outcome"] == "conflict":
+            message = "That time overlaps another scheduled load using the same automation."
+        elif not intervals:
             message = "An up-to-date energy forecast is needed to estimate the impact."
-        elif fallback:
-            message = "No suitable forecast window. Must run can use grid power at the latest start."
-        elif start is None:
-            message = "No available window fits before the finish time with these settings."
-        preview = dict(current=current, proposed=proposed, message=message, can_save=not fixed or start is not None)
+        elif proposed["start"] is None and item["timing"] == "fixed":
+            message = "Fixed needs a start time that fits the selected power source before the finish time."
+        elif proposed["start"] is None:
+            message = "No time in the forecast fits these settings. The load may be skipped."
+
+        can_save = (changed and proposed["outcome"] != "conflict"
+                    and (item["timing"] != "fixed" or proposed["start"] is not None))
+        preview = dict(current=current, proposed=proposed, message=message, changed=changed, can_save=can_save)
         preview["review"] = sha256(json.dumps([item, preview], sort_keys=True).encode()).hexdigest()
         return preview
 
@@ -446,10 +487,11 @@ class Scheduler:
                 if preview["review"] != review:
                     raise vol.Invalid("The forecast or schedule changed. Review the updated impact before saving.")
                 if not preview["can_save"]:
-                    raise vol.Invalid(preview["message"])
+                    raise vol.Invalid(preview["message"] or "No changes to save.")
                 planned_start = preview["proposed"]["start"]
             elif item["timing"] == "fixed":
-                planned_start, intervals, _, _ = await self.plan_edit(item, now)
+                intervals, reserved, args = self.edit_forecast(item, now)
+                planned_start = await self.find_edit_start(item, intervals, reserved, args)
                 if not intervals:
                     raise vol.Invalid("Wait for an up-to-date forecast before saving this Fixed run.")
                 if planned_start is None:
