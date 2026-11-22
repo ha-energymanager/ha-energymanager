@@ -1,5 +1,5 @@
-const cardType = "em-deferred-workloads-planner-card";
-const schedulerDomain = "em_deferred_workloads";
+const cardType = "em-flexible-load-scheduler-card";
+const schedulerDomain = "em_flexible_load_scheduler";
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const defaultEntity = "sensor.energy_manager_plan";
 const defaultCapacityEntity = "input_number.battery_capacity";
@@ -260,9 +260,9 @@ function compareSchedules(a, b) {
   return a.finish - b.finish || a.starts - b.starts;
 }
 
-function recommend(intervals, workloads, battery) {
+function recommend(intervals, loads, battery) {
   const horizon = intervals.at(-1).end;
-  const jobs = workloads.map(job => {
+  const jobs = loads.map(job => {
     const latest = Math.min(job.deadline ?? horizon, horizon) - job.duration;
     const candidates = possibleStarts(intervals, job, latest)
       .map(start => ({ ...job, start, end: start + job.duration }))
@@ -278,14 +278,14 @@ function recommend(intervals, workloads, battery) {
   const empty = { ...evaluateSchedule(intervals, [], battery), placements: [], finish: 0, starts: 0 };
   let schedules = [empty];
   for (const job of jobs) {
-    const { candidates, latest, ...workload } = job;
+    const { candidates, latest, ...load } = job;
     const known = new Map(candidates.map(({ window, result }) => [window.start, result]));
     const alternatives = [...schedules];
     for (const schedule of schedules) {
       const starts = schedule.placements.length ?
-        new Set([...known.keys(), ...possibleStarts(intervals, workload, latest, schedule.placements)]) : known.keys();
+        new Set([...known.keys(), ...possibleStarts(intervals, load, latest, schedule.placements)]) : known.keys();
       for (const start of starts) {
-        const window = { ...workload, start, end: start + workload.duration };
+        const window = { ...load, start, end: start + load.duration };
         const placements = [...schedule.placements, window];
         const result = schedule.placements.length ? evaluateSchedule(intervals, placements, battery) :
           (known.get(start) ?? evaluateSchedule(intervals, placements, battery));
@@ -350,7 +350,7 @@ function parseDeadline(value, timeZone, now, date = null) {
   return null;
 }
 
-class EmDeferredWorkloadsPlannerCard extends HTMLElement {
+class EmFlexibleLoadSchedulerCard extends HTMLElement {
   constructor() {
     super();
     this._nextId = 1;
@@ -399,8 +399,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           background: color-mix(in srgb, var(--planner-muted) 7%, transparent);
         }
         .editor:focus-within { border-color: var(--planner-solar); }
-        .workload-name { font-weight: 600; }
-        .workload-name input { font-weight: 500; }
+        .load-name { font-weight: 600; }
+        .load-name input { font-weight: 500; }
         label { display: grid; min-width: 0; gap: 4px; font-size: 12px; font-weight: 500; color: var(--planner-muted); }
         input, select, button {
           min-height: 34px;
@@ -433,13 +433,13 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           border: 1px solid var(--planner-line); border-radius: 6px; color: var(--planner-muted); }
         .repeat-days legend { font-size: 12px; }
         .weekday-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
-        #workload-guide { margin-top: 16px; padding: 10px 12px; border: 1px solid var(--planner-line);
+        #load-guide { margin-top: 16px; padding: 10px 12px; border: 1px solid var(--planner-line);
           border-radius: 8px; font-size: 13px; line-height: 1.5; }
-        #workload-guide summary { cursor: pointer; font-weight: 600; }
-        #workload-guide ol, #workload-guide ul { padding-inline-start: 20px; }
-        #workload-guide li + li { margin-top: 4px; }
-        #workload-guide h4 { margin: 12px 0 0; font-size: inherit; }
-        #workload-guide p { margin-top: 8px; }
+        #load-guide summary { cursor: pointer; font-weight: 600; }
+        #load-guide ol, #load-guide ul { padding-inline-start: 20px; }
+        #load-guide li + li { margin-top: 4px; }
+        #load-guide h4 { margin: 12px 0 0; font-size: inherit; }
+        #load-guide p { margin-top: 8px; }
         #history-actions { display: flex; flex-wrap: wrap; gap: 6px; }
         #edit-impact { margin-top: 12px; }
         #edit-impact table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
@@ -503,10 +503,10 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
             grid-template-columns: minmax(0,1fr) minmax(0,1fr) 32px;
             grid-template-areas: "name name remove" "power duration duration" "deadline source source";
           }
-          .workload-name { grid-area: name; }
-          .workload-power { grid-area: power; }
-          .workload-duration { grid-area: duration; }
-          .workload-deadline { grid-area: deadline; }
+          .load-name { grid-area: name; }
+          .load-power { grid-area: power; }
+          .load-duration { grid-area: duration; }
+          .load-deadline { grid-area: deadline; }
           .power-source { grid-area: source; }
           .remove { grid-area: remove; }
           .schedule-toggle { grid-row: 4; }
@@ -535,12 +535,12 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         <div id="editors"></div>
         <template id="editor">
           <div class="editor">
-            <label class="workload-name">Workload<input data-field="name" type="text" maxlength="80" placeholder="Workload name"></label>
-            <label class="workload-power">Power (kW)<input data-field="power" type="number" min="0.1" step="0.1" inputmode="decimal"></label>
-            <label class="workload-duration">Duration (min)<input data-field="minutes" type="number" min="1" step="1" inputmode="numeric"></label>
-            <label class="workload-deadline"><span class="deadline-label">Finish by (optional)</span><input data-field="deadline" type="time" step="60"></label>
+            <label class="load-name">Load<input data-field="name" type="text" maxlength="80" placeholder="Load name"></label>
+            <label class="load-power">Power (kW)<input data-field="power" type="number" min="0.1" step="0.1" inputmode="decimal"></label>
+            <label class="load-duration">Duration (min)<input data-field="minutes" type="number" min="1" step="1" inputmode="numeric"></label>
+            <label class="load-deadline"><span class="deadline-label">Finish by (optional)</span><input data-field="deadline" type="time" step="60"></label>
             <label class="power-source">Power source<select data-field="source"></select></label>
-            <button class="remove" type="button" aria-label="Remove workload" title="Remove workload">×</button>
+            <button class="remove" type="button" aria-label="Remove load" title="Remove load">×</button>
             <label class="schedule-toggle"><input data-field="enabled" type="checkbox"> Enable schedule</label>
             <div class="automation-options" hidden>
               <label>Start automation<select data-field="start_automation" required></select></label>
@@ -561,7 +561,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
             </div>
           </div>
         </template>
-        <div class="editor-toolbar"><button id="add" type="button">+ Add workload</button></div>
+        <div class="editor-toolbar"><button id="add" type="button">+ Add load</button></div>
         <p id="status" role="status" hidden></p>
         <section id="schedule" aria-labelledby="schedule-title" hidden>
           <div class="schedule-heading"><h3 id="schedule-title">Suggested schedule</h3><span id="horizon" class="muted"></span></div>
@@ -585,7 +585,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
         </div>
         <p id="action-status" class="muted" role="status" hidden></p>
         <section id="approved" aria-labelledby="approved-title" hidden>
-          <h3 id="approved-title">Approved workloads</h3>
+          <h3 id="approved-title">Approved loads</h3>
           <div id="repeats" hidden>
             <h3>Repeated schedules</h3>
             <ul id="repeat-list"></ul>
@@ -596,7 +596,7 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           </div>
           <div id="history" hidden>
             <div class="schedule-heading">
-              <h3>Recent workload runs</h3>
+              <h3>Recent load runs</h3>
               <div id="history-actions">
                 <button id="clear-completed" type="button" hidden>Clear completed runs</button>
                 <button id="clear-cancelled" type="button" hidden>Clear cancelled runs</button>
