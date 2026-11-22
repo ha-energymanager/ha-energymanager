@@ -109,12 +109,13 @@ function addCost(total, energy, rate) {
   return total === null || rate === null ? null : total + energy * rate;
 }
 
-function evaluateSchedule(intervals, placements, battery) {
+function evaluateSchedule(intervals, placements, battery, after = null) {
   const jobs = placements.map(window => ({
     ...window, solar: 0, divertedSolar: 0, battery: 0, grid: 0, cost: 0,
   }));
   
-  jobs.sort((a, b) => sourceOrder[a.source] - sourceOrder[b.source] || a.id - b.id);
+  jobs.sort((a, b) => Number(Boolean(b.reserved)) - Number(Boolean(a.reserved)) ||
+    sourceOrder[a.source] - sourceOrder[b.source] || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
   let deficit = 0;
   let priorityDeficit = 0;
   let missedChargeTarget = null;
@@ -124,7 +125,7 @@ function evaluateSchedule(intervals, placements, battery) {
   let exportImpact = 0;
   let afterRunGrid = 0;
   let afterRunCost = 0;
-  const lastFinish = Math.max(...jobs.map(job => job.end));
+  const lastFinish = after ?? Math.max(...jobs.filter(job => !job.reserved).map(job => job.end));
 
   for (const row of intervals) {
     const intervalJobs = jobs.filter(job => job.start < row.end && job.end > row.from);
@@ -134,6 +135,7 @@ function evaluateSchedule(intervals, placements, battery) {
       cuts.add(Math.max(row.from, job.start));
       cuts.add(Math.min(row.end, job.end));
     }
+    if (lastFinish > row.from && lastFinish < row.end) cuts.add(lastFinish);
     const boundaries = [...cuts].sort((a, b) => a - b);
     for (let i = 1; i < boundaries.length; i++) {
       const from = boundaries[i - 1];
@@ -170,11 +172,11 @@ function evaluateSchedule(intervals, placements, battery) {
         const diverted = job.source === "priority" ? Math.min(flexibleCharge, demand - direct) : 0;
         flexibleCharge -= diverted;
         divertedCharge += diverted;
-        const canUseBattery = job.source === "battery" || job.source === "grid";
-        const stored = canUseBattery ? Math.min(discharge, demand - direct) : 0;
+        const canUseBattery = job.reserved || job.source === "battery" || job.source === "grid";
+        const stored = canUseBattery ? Math.min(discharge, demand - direct - diverted) : 0;
         discharge -= stored;
         const imported = Math.max(0, demand - direct - diverted - stored);
-        if (imported > energyTolerance && job.source !== "grid") return null;
+        if (imported > energyTolerance && job.source !== "grid" && !job.reserved) return null;
         if (stored > energyTolerance) deficit += stored / battery.dischargeEfficiency;
         job.solar += direct;
         job.divertedSolar += diverted;
@@ -223,7 +225,7 @@ function evaluateSchedule(intervals, placements, battery) {
     }
   }
   return {
-    jobs, grid, solar, deficit, gridCost, exportImpact, afterRunGrid, afterRunCost, missedChargeTarget,
+    jobs: jobs.filter(job => !job.reserved), grid, solar, deficit, gridCost, exportImpact, afterRunGrid, afterRunCost, missedChargeTarget,
     totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
   };
 }
@@ -260,13 +262,38 @@ function compareSchedules(a, b) {
   return a.finish - b.finish || a.starts - b.starts;
 }
 
-function recommend(intervals, loads, battery) {
+function automationClash(window, placements) {
+  const targets = [window.start_automation, window.stop_automation].filter(Boolean);
+  return placements.some(job => window.start < job.end && window.end > job.start &&
+    targets.some(target => target === job.start_automation || target === job.stop_automation));
+}
+
+function approvedWindows(jobs, now) {
+  return jobs.filter(job => job.start != null &&
+    ["scheduled", "delayed", "starting", "running", "stopping", "stop_failed"].includes(job.status))
+    .map(job => {
+      const start = (job.actual_start ?? job.start) * 1000;
+      let end = job.stop_at == null ? start + job.duration * 1000 : job.stop_at * 1000;
+      if (["stopping", "stop_failed"].includes(job.status) || (job.status === "running" && end <= now)) {
+        end = Math.max(end, now + minute);
+      }
+      return { ...job, start, end, source: job.source === "priority" ? "priority" : "grid", reserved: true };
+    }).filter(job => job.end > now);
+}
+
+function recommend(intervals, loads, battery, reserved) {
+  const baseline = evaluateSchedule(intervals, reserved, battery);
+  const empty = { jobs: [], placements: [], finish: 0, starts: 0 };
+  if (!baseline) return empty;
+  const evaluate = placements => automationClash(placements.at(-1), [...reserved, ...placements.slice(0, -1)]) ?
+    null : evaluateSchedule(intervals, [...reserved, ...placements], battery);
   const horizon = intervals.at(-1).end;
   const jobs = loads.map(job => {
     const latest = Math.min(job.deadline ?? horizon, horizon) - job.duration;
-    const candidates = possibleStarts(intervals, job, latest)
+    const candidates = [...new Set([...possibleStarts(intervals, job, latest),
+      ...possibleStarts(intervals, job, latest, reserved)])]
       .map(start => ({ ...job, start, end: start + job.duration }))
-      .map(window => ({ window, result: evaluateSchedule(intervals, [window], battery) }))
+      .map(window => ({ window, result: evaluate([window]) }))
       .filter(candidate => candidate.result);
     return { ...job, latest, candidates };
   });
@@ -275,7 +302,7 @@ function recommend(intervals, loads, battery) {
     (a.deadline ?? horizon) - (b.deadline ?? horizon) || sourceOrder[a.source] - sourceOrder[b.source] ||
     b.duration - a.duration || a.id - b.id);
 
-  const empty = { ...evaluateSchedule(intervals, [], battery), placements: [], finish: 0, starts: 0 };
+  Object.assign(empty, baseline);
   let schedules = [empty];
   for (const job of jobs) {
     const { candidates, latest, ...load } = job;
@@ -287,8 +314,7 @@ function recommend(intervals, loads, battery) {
       for (const start of starts) {
         const window = { ...load, start, end: start + load.duration };
         const placements = [...schedule.placements, window];
-        const result = schedule.placements.length ? evaluateSchedule(intervals, placements, battery) :
-          (known.get(start) ?? evaluateSchedule(intervals, placements, battery));
+        const result = schedule.placements.length ? evaluate(placements) : known.get(start);
         if (result) alternatives.push({ ...result, placements, finish: Math.max(schedule.finish, window.end),
           starts: schedule.starts + start });
       }
@@ -298,7 +324,17 @@ function recommend(intervals, loads, battery) {
 
     if (!schedules.includes(empty)) schedules.push(empty);
   }
-  return schedules[0];
+  const best = schedules[0];
+  if (!best.jobs.length || !reserved.length) return best;
+  const baselineAfterRun = evaluateSchedule(intervals, reserved, battery, best.finish);
+  for (const key of ["totalCost", "gridCost", "exportImpact", "afterRunGrid", "afterRunCost"]) {
+    const before = (key.startsWith("afterRun") ? baselineAfterRun : baseline)?.[key] ?? null;
+    best[key] = best[key] === null || before === null ? null : best[key] - before;
+  }
+  best.baselineDeficit = baseline.deficit;
+  if (baseline.missedChargeTarget && best.missedChargeTarget?.at === baseline.missedChargeTarget.at &&
+      best.missedChargeTarget.soc >= baseline.missedChargeTarget.soc - 0.05) best.missedChargeTarget = null;
+  return best;
 }
 
 function approvalId() {
@@ -579,13 +615,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           <p id="edit-impact-delta" hidden></p>
         </section>
         <div id="approval" hidden>
-          <button id="approve" type="button">Approve schedule</button>
+          <button id="approve" type="button">Save schedule</button>
           <button id="cancel-edit" type="button" hidden>Cancel edit</button>
           <p id="approval-note" class="muted"></p>
         </div>
         <p id="action-status" class="muted" role="status" hidden></p>
         <section id="approved" aria-labelledby="approved-title" hidden>
-          <h3 id="approved-title">Approved loads</h3>
+          <h3 id="approved-title">Load schedules</h3>
           <div id="repeats" hidden>
             <h3>Repeated schedules</h3>
             <ul id="repeat-list"></ul>
@@ -615,8 +651,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
               and optionally one that stops it. Create these in <strong>Settings → Automations &amp; scenes</strong>
               if they do not appear in the list.</li>
             <li>Choose <strong>Timing</strong>, what to do <strong>If the forecast changes</strong>, and whether to <strong>Repeat</strong>.</li>
-            <li>Review the suggested time and estimated energy and cost when available, then select <strong>Approve</strong>.
-              A Home Assistant administrator must approve the run. Home Assistant runs it even when this page is closed.</li>
+            <li>Review the suggested time and estimated energy and cost when available, then save the schedule.
+              Only a Home Assistant administrator can schedule loads. Home Assistant runs them even when this page is closed.</li>
           </ol>
           <h4>Power source</h4>
           <ul>
@@ -643,7 +679,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
             <strong>Finish by</strong> to 4 pm. Choose <strong>Repeated</strong>, <strong>Flexible</strong>,
             <strong>Must run</strong> and <strong>Grid allowed</strong>. The planner looks for a suitable window and can start by noon
             if grid power is needed.</p>
-          <p>Under <strong>Approved loads</strong>, use <strong>Edit</strong> or <strong>Edit today</strong> to preview changes
+          <p>Under <strong>Load schedules</strong>, use <strong>Edit</strong> or <strong>Edit today</strong> to preview changes
             before saving. <strong>Clear completed runs</strong> removes finished entries from <strong>Recent load runs</strong>.</p>
         </details>
       </ha-card>`;
@@ -951,8 +987,9 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const battery = siteCapacity && intervals.every(row =>
       [row.startSoc, row.endSoc, row.floor].every(value => value !== null && value <= 100)) ?
       { capacity: siteCapacity, chargeEfficiency, dischargeEfficiency } : null;
-    const schedule = recommend(intervals, loads.filter(row => !row.problem && !row.repeat), battery);
-    this._renderSchedule(loads, schedule, intervals, battery, timeZone, now);
+    const reserved = approvedWindows(this._backend?.jobs ?? [], now);
+    const schedule = recommend(intervals, loads.filter(row => !row.problem && !row.repeat), battery, reserved);
+    this._renderSchedule(loads, schedule, intervals, battery, timeZone, now, reserved);
     this._renderApproval(loads, schedule, intervals.at(-1).end, now);
     this._get("status").hidden = true;
     this._get("schedule").hidden = false;
@@ -1065,6 +1102,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const backend = this._backend;
     const { entity, capacityEntity, capacity, maxAge, chargeEfficiency, dischargeEfficiency } = this._config;
     const proposed = new Map(schedule.jobs.map(row => [row.id, row.start]));
+    const windows = approvedWindows(backend?.jobs ?? [], now);
+    const approvalWindows = enabled.filter(row => !row.problem && !row.repeat).flatMap(row => {
+      const start = proposed.get(row.id) ??
+        (row.timing === "flexible" && row.policy === "must" && row.deadline !== null ? row.deadline - row.duration : null);
+      return start === null ? [] : [{ ...row, start, end: start + row.duration }];
+    });
     const issues = [];
     if (!backend) {
       issues.push(this._subscription?.failed ? "Install or restart the Home Assistant load scheduler." :
@@ -1079,7 +1122,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         issues.push("The card and scheduler must use matching forecast settings.");
       }
     }
-    if (!this._hass?.user?.is_admin) issues.push("A Home Assistant administrator must approve runs.");
+    if (!this._hass?.user?.is_admin) issues.push("Only a Home Assistant administrator can schedule loads.");
 
     const edit = this._editing?.job;
     if (edit && !backend?.jobs?.some(job => job.id === edit.id && ["scheduled", "delayed"].includes(job.status))) {
@@ -1106,7 +1149,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           start_automation: row.start_automation, stop_automation: row.stop_automation,
         } });
       } else if (!edit && horizon === null) {
-        issues.push(label + "Wait for an up-to-date forecast before approving a once-off run.");
+        issues.push(label + "Wait for an up-to-date forecast before scheduling this load.");
       } else if (row.timing === "flexible" && row.policy === "must" && row.deadline === null) {
         issues.push(label + "Choose a finish time for Must run.");
       } else if (deadline - row.duration <= now || deadline - now > 48 * hour) {
@@ -1114,7 +1157,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       } else if (!edit && start === null && row.timing === "fixed") {
         issues.push(label + "A suitable forecast window is required for a Fixed run.");
       } else if (start === null && row.deadline === null) {
-        issues.push(label + "Choose a finish time to approve a run without a suggested window.");
+        issues.push(label + "Choose a finish time to schedule this load without a suggested start time.");
+      } else if (!edit && approvalWindows.some(window => window.id === row.id &&
+          automationClash(window, [...windows, ...approvalWindows.filter(other => other.id !== row.id)]))) {
+        issues.push(label + "Another load uses the same automation at this time. Change the finish time or reschedule the other load.");
       } else if (start !== null && Math.floor(start / 1000) * 1000 <= now) {
         issues.push(label + "The suggested start has passed. Review the refreshed forecast.");
       } else {
@@ -1128,11 +1174,11 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         });
       }
     }
-    if (jobs.length > 12) issues.push("Approve up to 12 loads at a time.");
+    if (jobs.length > 12) issues.push("You can schedule up to 12 loads at a time.");
     if (!issues.length) this._approval = jobs;
     this._get("approve").disabled = Boolean(issues.length) || Boolean(this._saving);
-    this._get("approve").textContent = edit ? "Save changes" : enabled.some(row => row.repeat) ? "Approve schedule" :
-      enabled.length === 1 ? "Approve run" : "Approve " + enabled.length + " runs";
+    this._get("approve").textContent = edit ? "Save changes" : enabled.some(row => row.repeat) ? "Save schedule" :
+      enabled.length === 1 ? "Schedule load" : "Schedule " + enabled.length + " loads";
     this._get("approval-note").textContent = issues.join(" ") || (edit ?
       "The scheduler picks a new start when you save. Fixed runs keep that start time." : enabled.some(row => row.policy === "must") ?
       "Must run can use grid energy. A Flexible run may move up to its latest start." :
@@ -1150,7 +1196,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     this._render();
     if (!this._approval || this._saving) return;
     if (shown !== JSON.stringify(this._approval)) {
-      this._actionStatus("The suggested schedule changed. Review the updated times before approving.");
+      this._actionStatus("The suggested schedule changed. Review the updated times before saving.");
       return;
     }
     const drafts = this._approval.map(({ rowId, data }) => {
@@ -1161,7 +1207,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       return { row, data: { ...data, id: row.approval.id } };
     });
     this._saving = true;
-    this._actionStatus("Saving the approved schedule…");
+    this._actionStatus("Saving the schedule…");
     this._render();
     try {
       if (this._editing) {
@@ -1171,10 +1217,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       }
       await this._hass.callWS({ type: schedulerDomain + "/approve", jobs: drafts.map(draft => draft.data) });
       for (const draft of drafts) draft.row.remove();
-      this._actionStatus(drafts.some(draft => draft.data.repeat) ? "Schedule approved." :
-        drafts.length === 1 ? "Run approved." : drafts.length + " runs approved.");
+      this._actionStatus(drafts.some(draft => draft.data.repeat) ? "Schedule saved." :
+        drafts.length === 1 ? "Load scheduled." : drafts.length + " loads scheduled.");
     } catch (error) {
-      this._actionStatus(error?.message || "Could not save the schedule.");
+      const message = error?.message
+        ?.replace("The forecast or approved runs no longer support this schedule.", "The forecast or other scheduled loads no longer allow these times.")
+        .replace("overlaps another approved run using the same automation.", "overlaps another scheduled load that uses the same automation.");
+      this._actionStatus(message || "Could not save the schedule.");
       if (this._editing) this._editing.preview = null;
     } finally {
       this._saving = false;
@@ -1313,7 +1362,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     }
   }
 
-  _renderSchedule(loads, schedule, intervals, battery, timeZone, now) {
+  _renderSchedule(loads, schedule, intervals, battery, timeZone, now, reserved) {
     const last = intervals.at(-1);
     const locale = this._hass.language || undefined;
     const clock = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone });
@@ -1356,9 +1405,11 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         item.dataset.source = "unplaced";
         const fallback = row.enabled && row.timing === "flexible" && row.policy === "must" && row.deadline !== null;
         const latest = fallback ? row.deadline - row.duration : null;
-        detail.textContent = row.problem || (row.repeat ? "Home Assistant schedules each selected day after approval." : fallback ? "No suitable window found. If approved, latest start is " +
+        detail.textContent = row.problem || (row.repeat ? "Home Assistant will pick a start time on each selected day." : fallback ? "No suitable time found. If you save this schedule, the latest start is " +
           startLabel(latest) + ", " + clock.format(latest) + "." : row.duration > last.end - intervals[0].from ?
-            "The forecast is too short for this duration." : "No suitable window found.");
+            "The forecast is too short for this duration." : reserved.length ?
+              "No time in the forecast fits this load. Other scheduled loads may be limiting the available times. Try a later finish time or a shorter run." :
+              "No time in the forecast fits this load. Try a later finish time or a shorter run.");
       }
       item.append(detail);
       list.append(item);
@@ -1370,7 +1421,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     totals.textContent = "Estimated added cost " + cost(schedule.totalCost) +
       " · Extra grid cost " + cost(schedule.gridCost) + " · Feed-in impact " + cost(schedule.exportImpact);
     const notes = [];
-    if (schedule.missedChargeTarget) {
+    if (reserved.length) notes.push("Suggested times take other scheduled loads into account.");
+    if (schedule.jobs.length && schedule.missedChargeTarget) {
       const { at, target, soc } = schedule.missedChargeTarget;
       notes.push("Battery forecast at " + startLabel(at) + ", " + clock.format(at) + " is " +
         number.format(soc) + "% vs a planned " + number.format(target) + "% charge target.");
@@ -1378,9 +1430,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     if (schedule.afterRunGrid >= 0.005) {
       notes.push(kwh(schedule.afterRunGrid) + " extra grid use after the last run (" + cost(schedule.afterRunCost) + ").");
     }
-    if (battery && schedule.deficit >= 0.005) {
+    const baselineDeficit = schedule.baselineDeficit ?? 0;
+    if (battery && schedule.jobs.length && schedule.deficit - baselineDeficit >= 0.005) {
       const endSoc = Math.max(0, last.endSoc - schedule.deficit / battery.capacity * 100);
-      notes.push("Battery at forecast end " + number.format(endSoc) + "% vs " + number.format(last.endSoc) + "% planned.");
+      const baselineSoc = Math.max(0, last.endSoc - baselineDeficit / battery.capacity * 100);
+      notes.push("Battery at forecast end " + number.format(endSoc) + "% with these loads (" +
+        number.format(baselineSoc) + "% before adding them).");
       if (endSoc <= last.minSoc + 0.1) notes.push("Further grid use beyond the forecast is possible.");
     }
    if (!battery && loads.some(row => row.source !== "solar")) {
