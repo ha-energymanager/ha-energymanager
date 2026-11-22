@@ -423,6 +423,14 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           border: 1px solid var(--planner-line); border-radius: 6px; color: var(--planner-muted); }
         .repeat-days legend { font-size: 11px; }
         .weekday-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+        #workload-guide { margin-top: 16px; padding: 10px 12px; border: 1px solid var(--planner-line);
+          border-radius: 8px; font-size: 13px; line-height: 1.5; }
+        #workload-guide summary { cursor: pointer; font-weight: 600; }
+        #workload-guide ol, #workload-guide ul { padding-inline-start: 20px; }
+        #workload-guide li + li { margin-top: 4px; }
+        #workload-guide h4 { margin: 12px 0 0; font-size: inherit; }
+        #workload-guide p { margin-top: 8px; }
+        #history-actions { display: flex; flex-wrap: wrap; gap: 6px; }
         #edit-impact { margin-top: 12px; }
         #edit-impact table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
         #edit-impact th, #edit-impact td { padding: 6px; text-align: start; border-bottom: 1px solid var(--planner-line);
@@ -574,16 +582,61 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
           <div id="history" hidden>
             <div class="schedule-heading">
               <h3>Recent workload runs</h3>
-              <button id="clear-cancelled" type="button" hidden>Clear cancelled runs</button>
+              <div id="history-actions">
+                <button id="clear-completed" type="button" hidden>Clear completed runs</button>
+                <button id="clear-cancelled" type="button" hidden>Clear cancelled runs</button>
+              </div>
             </div>
             <ul id="history-list"></ul>
           </div>
         </section>
+        <details id="workload-guide" open>
+          <summary>How to schedule a workload</summary>
+          <ol>
+            <li>Select <strong>Add workload</strong> or use the first row. Enter a name, power in kW, and duration in minutes.
+              For example, a 1,500 W dryer is 1.5 kW.</li>
+            <li>Choose a <strong>Power source</strong> and, if needed, a <strong>Finish by</strong> time.</li>
+            <li>Turn on <strong>Enable schedule</strong>. Select the Home Assistant automation that starts the appliance,
+              and optionally one that stops it. Create these in <strong>Settings → Automations &amp; scenes</strong>
+              if they do not appear in the list.</li>
+            <li>Choose <strong>Timing</strong>, what to do <strong>If the forecast changes</strong>, and whether to <strong>Repeat</strong>.</li>
+            <li>Review the suggested time and estimated energy and cost when available, then select <strong>Approve</strong>.
+              A Home Assistant administrator must approve the run. Home Assistant runs it even when this page is closed.</li>
+          </ol>
+          <h4>Power source</h4>
+          <ul>
+            <li><strong>Surplus solar only</strong> uses solar left after other demand and planned battery charging.</li>
+            <li><strong>Solar + battery</strong> can also use available battery energy within its limits.</li>
+            <li><strong>Solar before battery charging</strong> can use solar that would otherwise go into flexible battery charging.</li>
+            <li><strong>Grid allowed</strong> can use surplus solar, available battery energy, then grid power for the shortfall.</li>
+          </ul>
+          <h4>Timing and automation settings</h4>
+          <ul>
+            <li><strong>Finish by</strong> is the latest time the run should end. Repeats and flexible <strong>Must run</strong>
+              workloads require it. For a new once-off run, the card uses the next occurrence of that local time.</li>
+            <li><strong>Start automation</strong> is required. <strong>Stop automation</strong> runs after the duration.
+              Leave it blank when the appliance finishes on its own.</li>
+            <li><strong>Fixed</strong> keeps the approved start. <strong>Flexible</strong> can move the start as the forecast changes.</li>
+            <li><strong>May be deferred</strong> can skip the run if its power source is unavailable at the fixed start or no suitable
+              window is found by the latest start. <strong>Must run</strong> can use grid power if needed and still respects
+              the selected automation’s conditions.</li>
+            <li><strong>Once-off</strong> runs once. <strong>Repeated</strong> runs on the selected weekdays.
+              A fixed repeat also asks for a <strong>Start at</strong> time.</li>
+          </ul>
+          <p><strong>Example</strong> To run a pool pump for four hours on selected days, set the duration to 240 minutes and
+            <strong>Finish by</strong> to 4 pm. Choose <strong>Repeated</strong>, <strong>Flexible</strong>,
+            <strong>Must run</strong> and <strong>Grid allowed</strong>. The planner looks for a suitable window and can start by noon
+            if grid power is needed.</p>
+          <p>Under <strong>Approved workloads</strong>, use <strong>Edit</strong> or <strong>Edit today</strong> to preview changes
+            before saving. <strong>Clear completed runs</strong> removes finished entries from <strong>Recent workload runs</strong>.</p>
+        </details>
       </ha-card>`;
     this._get("add").addEventListener("click", () => this._addWorkload(false, true));
     this._get("approve").addEventListener("click", () => this._approve());
     this._get("cancel-edit").addEventListener("click", () => this._endEdit());
-    this._get("clear-cancelled").addEventListener("click", event => this._clearCancelled(event.currentTarget));
+    for (const status of ["cancelled", "completed"]) {
+      this._get("clear-" + status).addEventListener("click", event => this._clearHistory(event.currentTarget, status));
+    }
     this._addWorkload(true);
   }
 
@@ -1124,13 +1177,13 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     }
   }
 
-  async _clearCancelled(button) {
+  async _clearHistory(button, status) {
     button.disabled = true;
     try {
-      const { count } = await this._hass.callWS({ type: schedulerDomain + "/clear_cancelled" });
-      this._actionStatus(count === 1 ? "Cleared 1 cancelled run." : "Cleared " + count + " cancelled runs.");
+      const { count } = await this._hass.callWS({ type: schedulerDomain + "/clear_" + status });
+      this._actionStatus("Cleared " + count + " " + status + (count === 1 ? " run." : " runs."));
     } catch (error) {
-      this._actionStatus(error?.message || "Could not clear cancelled runs.");
+      this._actionStatus(error?.message || "Could not clear " + status + " runs.");
     } finally {
       button.disabled = false;
     }
@@ -1159,6 +1212,8 @@ class EmDeferredWorkloadsPlannerCard extends HTMLElement {
     this._get("history").hidden = !jobs.some(job => !current.has(job.status));
     this._get("clear-cancelled").hidden = !admin || !this._backend?.automation_exclusions ||
       !jobs.some(job => job.status === "cancelled");
+    this._get("clear-completed").hidden = !admin || !this._backend?.supports_clear_completed ||
+      !jobs.some(job => job.status === "completed");
     const repeatList = this._get("repeat-list");
     repeatList.replaceChildren();
     for (const entry of repeats) {
