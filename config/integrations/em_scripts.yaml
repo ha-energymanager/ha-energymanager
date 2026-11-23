@@ -2901,6 +2901,12 @@ script:
               {% else %}
                 0
               {% endif %}
+            {% elif brand == 'foxess' %}
+              {% set fox = integration_entities('foxess_modbus')
+                | select('match', '^sensor\.')
+                | select('search', '_battery_soh(_[12])?$')
+                | list | first | default('', true) %}
+              {{ states(fox) | float(0) if has_value(fox) else 'unknown' }}
             {% elif brand == 'fronius' %}
               0
             {% elif brand == 'solaredge' %}
@@ -2925,6 +2931,12 @@ script:
               {% else %}
                 0
               {% endif %}
+            {% elif brand == 'foxess' %}
+              {% set fox = integration_entities('foxess_modbus')
+                 | select('match', '^sensor\.')
+                 | select('search', '_invtemp$')
+                 | list | first | default('', true) %}
+              {{ states(fox) | float if has_value(fox) and is_number(states(fox)) else 'unknown' }}
             {% elif brand == 'fronius' %}
               {{ states('sensor.fronius_internal_temperature') | float(0) }}
             {% elif brand == 'solaredge' %}
@@ -2948,6 +2960,18 @@ script:
             {% elif brand == 'fronius' %}
             {% elif brand == 'solaredge' %}
               {{ states('sensor.solaredge_battery_avg_temp') | float(0) }}
+            {% elif brand == 'foxess' %}
+              {% set entities = integration_entities('foxess_modbus')
+                 | select('match', '^sensor\.')
+                 | select('search', '_battery_temp(_[12])?$')
+                 | list %}
+              {% set ns = namespace(value=none) %}
+              {% for entity in entities %}
+                {% if ns.value is none and has_value(entity) and is_number(states(entity)) %}
+                  {% set ns.value = states(entity) | float %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.value if ns.value is not none else 'unknown' }}
             {% endif %}
           retain: true
       # Calculate and publish battery charge (SOC * Capacity / 100)
@@ -3145,6 +3169,8 @@ script:
               Not Supported
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
               {{ states('sensor.goodwe_device_type') | string }}
+            {% elif brand == 'foxess' %}
+              {{ device_attr(fox_mode, 'model') | default('unknown', true) if fox_mode else 'unknown' }}
             {% elif brand == 'fronius' %}
               {{ states('sensor.sensor.fronius_inverter_model') | string }}
             {% elif brand == 'solaredege' %}
@@ -3169,8 +3195,6 @@ script:
               {{ states('sensor.fronius_inverter_serial') | string }}
             {% elif brand == 'solaredge' %}
               {{ states('sensor.solaredge_inverter_serial_number') | string }}
-            {% elif brand == 'foxess' %}
-              {{ device_attr(fox_solar, 'serial_number') | default('unknown', true) if fox_solar else 'unknown' }}
             {% endif %}
           retain: true
       - action: mqtt.publish
@@ -3187,6 +3211,23 @@ script:
               {{ states('sensor.fronius_firmware_version') | string }}
             {% elif brand == 'solaredge' %}
               {{ states('sensor.solaredge_firmware_version') | string }}
+            {% elif brand == 'foxess' %}
+              {% set entities = integration_entities('foxess_modbus') %}
+              {% set ns = namespace(versions=[]) %}
+              {% for key, label in [
+                ('_master_version$', 'Master'),
+                ('_slave_version$', 'Slave'),
+                ('_manager_version$', 'Manager')
+              ] %}
+                {% set entity = entities
+                   | select('match', '^sensor\.')
+                   | select('search', key)
+                   | list | first | default('', true) %}
+                {% if entity and has_value(entity) %}
+                  {% set ns.versions = ns.versions + [label ~ ' ' ~ states(entity)] %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.versions | join(' / ') if ns.versions else 'unknown' }}
             {% endif %}
           retain: true
       - action: mqtt.publish
