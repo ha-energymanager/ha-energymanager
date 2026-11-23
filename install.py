@@ -27,6 +27,8 @@ BRANCH = os.environ.get('EM_UPDATE_BRANCH', 'main')
 ROOT = Path('/config')
 STATE = ROOT / '.energy_manager'
 SCRIPTS = ROOT / 'scripts'
+SIDEBAR_PENDING = STATE / 'sidebar-first-run.pending'
+SIDEBAR_POLICY = ROOT / 'www' / 'em-sidebar-first-run.json'
 REQUIRED = (
     'update_checker.py',
     'file_merger.py',
@@ -39,14 +41,11 @@ REQUIRED = (
 SSH_HOST = 'a0d7b954-ssh.local.hass.io'
 SSH_USER = 'hassio'
 
-
 def log(message):
     print(f'[EM Install] {message}', flush=True)
 
-
 def run(command, **kwargs):
     return subprocess.run(command, check=True, **kwargs)
-
 
 def prepare():
     if not (os.environ.get('SUPERVISOR_TOKEN') or os.environ.get('HASSIO_TOKEN')):
@@ -54,6 +53,14 @@ def prepare():
     if not ROOT.is_dir() or not Path('/share').is_dir():
         raise RuntimeError('Home Assistant /config or /share is unavailable')
 
+    is_new_install = not (STATE / 'version.txt').exists()
+    if is_new_install:
+        SIDEBAR_PENDING.parent.mkdir(parents=True, exist_ok=True)
+        SIDEBAR_PENDING.touch(exist_ok=True)
+        log('New installation: sidebar defaults will be offered after deployment')
+    else:
+        log('Existing installation: sidebar defaults are not reinitialised')
+    
     STATE.mkdir(parents=True, exist_ok=True)
     SCRIPTS.mkdir(parents=True, exist_ok=True)
 
@@ -637,6 +644,15 @@ def finalise():
         log('Home Assistant configuration validation result: ' + json.dumps(result))
         raise RuntimeError('Home Assistant configuration is not valid; OS will NOT be rebooted')
     log('Home Assistant configuration valid')
+
+    if SIDEBAR_PENDING.is_file():
+        if not SIDEBAR_POLICY.is_file():
+            _write_atomic(SIDEBAR_POLICY, json.dumps({
+                'enabled': True,
+                'schema_version': 1,
+            }, indent=2) + '\n')
+            log('Enabled first-run sidebar defaults for new Home Assistant users')
+        SIDEBAR_PENDING.unlink(missing_ok=True)
 
     STATE.mkdir(parents=True, exist_ok=True)
     marker = STATE / 'install-status.json'
