@@ -9,8 +9,8 @@ template:
           {% elif brand == 'sigenergy' %}
             {{ states('sensor.sigenergy_device_type_code') not in ['unavailable', 'unknown', 'none'] }}
           {% elif brand == 'foxess' %}
-            {% set fox = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_pv_power_now$') | list | first | default('', true) %}
-            {{ has_value(fox) }}
+            {% set fox = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_connection_status$') | list | first | default('', true) %}
+            {{ has_value(fox) and is_state(fox, 'Connected') }}
           {% elif brand == 'fronius' %}
             {{ not is_state('sensor.fronius_inverter_model', 'unavailable') }}
           {% elif brand == 'solaredge' %}
@@ -1434,7 +1434,14 @@ template:
             }}
           {% elif brand == 'foxess' %}
             {% set fox = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_pv_power_now$') | list | first | default('', true) %}
-            {{ ((states(fox) | float(0) * 1000) + additional) > 10 }}
+            {% set strings = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_pv[1-6]_power$') | list %}
+            {% set ns = namespace(power=0) %}
+            {% if has_value(fox) %}
+              {% set ns.power = states(fox) | float(0) %}
+            {% else %}
+              {% for e in strings %}{% if has_value(e) %}{% set ns.power = ns.power + states(e) | float(0) %}{% endif %}{% endfor %}
+            {% endif %}
+            {{ ((ns.power * 1000) + additional) > 10 }}
           {% elif brand == 'fronius' %}
               {% set pv1 = states('sensor.fronius_pv1_power_raw') | float(0) %}
               {% set pv2 = states('sensor.fronius_pv2_power_raw') | float(0) %}
@@ -1466,7 +1473,10 @@ template:
             }}
           {% elif brand == 'foxess' %}
             {% set fox = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_pv_power_now$') | list | first | default('', true) %}
-            {{ add_ok or has_value(fox) }}
+            {% set strings = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_pv[1-6]_power$') | list %}
+            {% set ns = namespace(found=false) %}
+            {% for e in strings %}{% if has_value(e) %}{% set ns.found = true %}{% endif %}{% endfor %}
+            {{ add_ok or has_value(fox) or ns.found }}
           {% elif brand == 'fronius' %}
             {{ add_ok or (states('sensor.fronius_pv1_power_raw') not in ['unavailable', 'unknown', 'none']) }}
           {% elif brand == 'solaredge' %}
@@ -1496,8 +1506,10 @@ template:
             }}
           {% elif brand == 'foxess' %}
             {% set fox = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_invbatpower(_[12])?$') | list %}
+            {% set total = fox | select('search', '_invbatpower$') | list %}
+            {% set values = total if total | count else fox %}
             {% set ns = namespace(total=0) %}
-            {% for e in fox %}{% if has_value(e) %}{% set ns.total = ns.total + states(e) | float(0) %}{% endif %}{% endfor %}
+            {% for e in values %}{% if has_value(e) %}{% set ns.total = ns.total + states(e) | float(0) %}{% endif %}{% endfor %}
             {{ ns.total < -0.01 or additional < -10 }}
           {% elif brand == 'fronius' %}
             {{ states('sensor.fronius_battery_charge_power') | float(0) > 10 or additional < -10 }}
@@ -1557,8 +1569,10 @@ template:
             }}
           {% elif brand == 'foxess' %}
             {% set fox = integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_invbatpower(_[12])?$') | list %}
+            {% set total = fox | select('search', '_invbatpower$') | list %}
+            {% set values = total if total | count else fox %}
             {% set ns = namespace(total=0) %}
-            {% for e in fox %}{% if has_value(e) %}{% set ns.total = ns.total + states(e) | float(0) %}{% endif %}{% endfor %}
+            {% for e in values %}{% if has_value(e) %}{% set ns.total = ns.total + states(e) | float(0) %}{% endif %}{% endfor %}
             {{ ns.total > 0.01 or additional > 10 }}
           {% elif brand == 'fronius' %}
             {{ states('sensor.fronius_battery_discharge_power') | float(0) > 10 or additional > 10 }}
