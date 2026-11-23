@@ -22,7 +22,7 @@ INTEGRATIONS = {
     'lbbrhzn/ocpp': 'ocpp',
     'mletenay/home-assistant-goodwe-inverter': 'goodwe',
     'Roving-Ronin/BatteryLedger': 'battery_ledger',
-    'albuslee/foxess-ws-bridge': 'foxess_ws',
+    'nathanmarlor/foxess_modbus': 'foxess_modbus',
 }
 CATEGORIES = {'integration', 'plugin', 'theme', 'template'}
 
