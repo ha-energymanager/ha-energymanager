@@ -58,6 +58,7 @@ AUTOMATION_EXCLUSIONS = sorted(map(automation_key, (
     "Start Energy Control Timer When Switch Turns Off",
     "Sync Inverter Controls on Startup",
     "Turn Energy Control Switch On When Timer Finishes",
+    "Turn off boost enabled at midnight",
     "Update Energy Manager Decision Sensor",
 )))
 
