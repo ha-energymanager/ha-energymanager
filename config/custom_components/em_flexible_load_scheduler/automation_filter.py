@@ -14,6 +14,7 @@ AUTOMATION_EXCLUSIONS = sorted(map(automation_key, (
     "Electricity: Reset Export Profit Monthly",
     "Electricity: Reset Import and Export Energy Monthly",
     "Electricity: Reset import Cost Monthly",
+    "EM Placeholder (safe)",
     "EM: VictoriaMetrics first-boot setup",
     "Energy Manager - Manual Update Check",
     "Energy Manager - Perform Update",
