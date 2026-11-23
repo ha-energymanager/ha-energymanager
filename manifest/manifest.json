@@ -235,6 +235,12 @@
       "backup_current": true,
       "new_in_version": "2.0.0"
     },
+    "www/em-sidebar-initialiser.js": {
+      "action": "replace",
+      "description": "Sidebar Initialiser",
+      "backup_current": true,
+      "new_in_version": "2.1.0"
+    },
     "www/energy-manager-settings.svg": {
       "action": "remove",
       "description": "Energy Manager Settings Graphic",
