@@ -28,15 +28,14 @@ automation:
     mode: single
   - id: foxess_connection_lost
     alias: "FoxESS: Connection Lost"
-    description: "Notify when the FoxESS WebSocket connection is lost"
     trigger:
       - platform: template
         value_template: >-
-          {% set fox = integration_entities('foxess_ws')
-             | select('match', '^binary_sensor\.')
-             | select('search', '_websocket_connected$')
+          {% set fox = integration_entities('foxess_modbus')
+             | select('match', '^sensor\.')
+             | select('search', '_connection_status$')
              | list | first | default('', true) %}
-          {{ fox != '' and states(fox) in ['off', 'unavailable'] }}
+          {{ fox != '' and states(fox) != 'Connected' }}
         for: "00:05:00"
     condition:
       - condition: state
@@ -46,32 +45,41 @@ automation:
       - action: persistent_notification.create
         data:
           title: "FoxESS Connection Lost"
-          message: >
-            The FoxESS WebSocket connection has been unavailable
-            for at least five minutes. Check the FoxESS Cloud
-            integration and network connectivity.
+          message: "FoxESS Modbus connection unavailable for five minutes."
           notification_id: foxess_inverter_offline
     mode: single
   - id: foxess_connection_restored
     alias: "FoxESS: Connection Restored"
-    description: "Dismiss the FoxESS offline notification on reconnection"
     trigger:
       - platform: template
         value_template: >-
-          {% set fox = integration_entities('foxess_ws')
-             | select('match', '^binary_sensor\.')
-             | select('search', '_websocket_connected$')
+          {% set fox = integration_entities('foxess_modbus')
+             | select('match', '^sensor\.')
+             | select('search', '_connection_status$')
              | list | first | default('', true) %}
-          {{ fox != '' and is_state(fox, 'on') }}
+          {{ fox != '' and is_state(fox, 'Connected') }}
     condition:
       - condition: state
         entity_id: input_select.inverter_brand
         state: "foxess"
     action:
+      - action: script.foxess_apply_ems_control
+        data:
+          requested_mode: Stop
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.inverter_charge_discharge_mode
+        data:
+          option: Stop
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.inverter_ems_mode
+        data:
+          option: Self-Consumption mode
       - action: persistent_notification.dismiss
         data:
           notification_id: foxess_inverter_offline
-    mode: single  
+    mode: single
   - id: "electricity_5_minute_import_cost_export_price"
     alias: "Electricity: 5 Minute Import Cost & Export Price"
     trigger:
@@ -1235,7 +1243,7 @@ automation:
           title: "Inverter Connection Lost"
           message: >
             The {{ states('input_select.inverter_brand') | title }} inverter appears to be offline.
-            Please check your network connection and {{ 'FoxESS Cloud integration' if is_state('input_select.inverter_brand', 'foxess') else 'modbus settings' }}.
+            Please check your network connection and modbus settings.
           notification_id: "inverter_offline"
     mode: restart
   - id: "clear_inverter_connection_notification"
@@ -1450,12 +1458,8 @@ automation:
                 value_template: "{{ is_state('input_select.inverter_brand', 'foxess') }}"
             sequence:
               - wait_template: >-
-                  {{ (integration_entities('foxess_ws')
-                      | select('match', '^switch\.')
-                      | select('search', 'scheduler') | list | count > 0)
-                     and (integration_entities('foxess_ws')
-                      | select('match', '^select\.')
-                      | select('search', 'work_mode') | list | count > 0) }}
+                  {{ integration_entities('foxess_modbus') | select('match', '^select\.')
+                     | select('search', '_work_mode$') | list | count > 0 }}
                 timeout: "00:01:00"
                 continue_on_timeout: false
               - action: script.set_inverter_charge_discharge_mode
@@ -1473,22 +1477,18 @@ automation:
                   option: "Self-Consumption mode"
               - variables:
                   fox_min_soc_entity: >-
-                    {{ integration_entities('foxess_ws')
-                       | select('match', '^number\.')
-                       | select('search', '_min_soc_on_grid$')
-                       | list | first | default('', true) }}
+                    {{ integration_entities('foxess_modbus') | select('match', '^number\.')
+                       | select('search', '_min_soc$') | list | first | default('', true) }}
+                  fox_max_soc_entity: >-
+                    {{ integration_entities('foxess_modbus') | select('match', '^number\.')
+                       | select('search', '_max_soc$') | list | first | default('', true) }}
                   fox_export_limit_entity: >-
-                    {{ integration_entities('foxess_ws')
-                       | select('match', '^number\.')
-                       | select('search', '_export_limit$')
-                       | list | first | default('', true) }}
+                    {{ integration_entities('foxess_modbus') | select('match', '^number\.')
+                       | select('search', '_export_power_limit$') | list | first | default('', true) }}
               - if:
                   - condition: template
                     value_template: >-
-                      {{ fox_min_soc_entity != ''
-                         and has_value(fox_min_soc_entity)
-                         and states('input_number.inverter_min_soc') | float(-1)
-                             != states(fox_min_soc_entity) | float(-1) }}
+                      {{ fox_min_soc_entity != '' and has_value(fox_min_soc_entity) }}
                 then:
                   - action: input_number.set_value
                     target:
@@ -1498,16 +1498,23 @@ automation:
               - if:
                   - condition: template
                     value_template: >-
-                      {{ fox_export_limit_entity != ''
-                         and has_value(fox_export_limit_entity)
-                         and states('input_number.inverter_export_power_limit_input') | float(-1)
-                             != states(fox_export_limit_entity) | float(-1) }}
+                      {{ fox_max_soc_entity != '' and has_value(fox_max_soc_entity) }}
+                then:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.inverter_max_soc
+                    data:
+                      value: "{{ states(fox_max_soc_entity) | float }}"
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ fox_export_limit_entity != '' and has_value(fox_export_limit_entity) }}
                 then:
                   - action: input_number.set_value
                     target:
                       entity_id: input_number.inverter_export_power_limit_input
                     data:
-                      value: "{{ states(fox_export_limit_entity) | float }}"                  
+                      value: "{{ states(fox_export_limit_entity) | float }}"
           - conditions:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
@@ -2138,36 +2145,6 @@ automation:
       - service: homeassistant.update_entity
         target:
           entity_id: sensor.energy_manager_decision_timestamp
-      - if:
-          - condition: template
-            value_template: >-
-              {{ is_state('input_select.inverter_brand', 'foxess')
-                 and states('input_select.inverter_charge_discharge_mode')
-                     in ['Forced Charge', 'Forced Discharge']
-                 and is_state('switch.energy_control_on_off', 'on') }}
-        then:
-          - action: script.foxess_apply_ems_schedule
-  - id: foxess_dismiss_success_notifications
-    alias: "FoxESS - Dismiss Successful Scheduler Notifications"
-    description: "Dismiss routine FoxESS scheduler success notifications, keeping errors"
-    trigger:
-      - platform: persistent_notification
-        update_type:
-          - added
-          - updated
-    condition:
-      - condition: template
-        value_template: >-
-          {{ trigger.notification.title in [
-            'FoxESS Scheduler Updated',
-            'FoxESS Peak fdPwr Updated'
-          ] }}
-    action:
-      - service: persistent_notification.dismiss
-        data:
-          notification_id: "{{ trigger.notification.notification_id }}"
-    mode: queued
-    max: 10        
   - id: sellbuy_mode_enabled
     alias: "Sell-Buy Mode Enabled"
     description: "Turn off High-Sell mode if Sell-Buy Mode is enabled"
