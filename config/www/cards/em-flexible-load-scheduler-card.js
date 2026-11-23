@@ -879,7 +879,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
 
   _automationSelectable(entityId) {
     return entityId.startsWith("automation.") && !this._automationExcluded(entityId) &&
-      ["on", "off"].includes(this._hass?.states?.[entityId]?.state);
+      this._hass?.states?.[entityId]?.state === "on";
   }
 
   _populateAutomations(row) {
