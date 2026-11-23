@@ -291,7 +291,9 @@ class Scheduler:
         if not self.automation_available(entity):
             return False
         state = self.hass.states.get(entity)
-        return not excluded(entity, getattr(state, "attributes", {}).get("friendly_name") or "")
+        return state.state == "on" and not excluded(
+            entity, state.attributes.get("friendly_name") or ""
+        )
 
     async def approve(self, requested):
         async with self.lock:
