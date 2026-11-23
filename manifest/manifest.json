@@ -1022,7 +1022,7 @@
       "custom_repository": true
     },
     {
-      "repository": "albuslee/foxess-ws-bridge",
+      "repository": "nathanmarlor/foxess_modbus",
       "type": "integration",
       "action": "install",
       "version": "latest",
