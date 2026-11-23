@@ -2368,6 +2368,22 @@ script:
           fox_solar: >-
             {{ integration_entities('foxess_modbus') | select('match', '^sensor\\.')
                | select('search', '_pv_power_now$') | list | first | default('', true) }}
+          fox_pv_strings: >-
+            {{ integration_entities('foxess_modbus') | select('match', '^sensor\.')
+               | select('search', '_pv[1-6]_power$') | list }}
+          fox_solar_w: >-
+            {% if fox_solar != '' and has_value(fox_solar) %}
+              {{ (states(fox_solar) | float(0) * 1000) | round(0) }}
+            {% else %}
+              {% set ns = namespace(total=0, found=false) %}
+              {% for entity in fox_pv_strings %}
+                {% if has_value(entity) %}
+                  {% set ns.total = ns.total + states(entity) | float(0) * 1000 %}
+                  {% set ns.found = true %}
+                {% endif %}
+              {% endfor %}
+              {{ ns.total | round(0) if ns.found else 'unknown' }}
+            {% endif %}
           fox_grid_entities: >-
             {{ integration_entities('foxess_modbus') | select('match', '^sensor\.')
                | select('search', '_grid_ct(_[RST])?$') | list }}
@@ -2386,8 +2402,10 @@ script:
             {{ integration_entities('foxess_modbus') | select('match', '^sensor\\.')
                | select('search', '_invbatpower(_[12])?$') | list }}
           fox_battery_w: >-
+            {% set total = fox_batteries | select('search', '_invbatpower$') | list %}
+            {% set entities = total if total | count else fox_batteries %}
             {% set ns = namespace(power=0, found=false) %}
-            {% for entity in fox_batteries %}
+            {% for entity in entities %}
               {% if has_value(entity) %}
                 {% set ns.power = ns.power - states(entity) | float(0) * 1000 %}
                 {% set ns.found = true %}
@@ -2461,7 +2479,7 @@ script:
               {% set real_ap = ap * (10 ** ap_sf) %}
               {{ (real_ap + batt  + additional) | round(0) }}
             {% elif brand == 'foxess' %}
-              {{ ((states(fox_solar) | float(0) * 1000) + additional) | round(0) if has_value(fox_solar) else 'unknown' }}
+              {{ (fox_solar_w | float(0) + additional) | round(0) if is_number(fox_solar_w) else 'unknown' }}
             {% else %}
               {{ additional | round(0) }}
             {% endif %}
@@ -2565,7 +2583,7 @@ script:
               {% set real_ap = ap * (10 ** ap_sf) %}
               {{ (real_ap + batt + additional) | round(0) }}
             {% elif brand == 'foxess' %}
-              {{ (((states(fox_solar) | float(0) * 1000)) + additional) | round(0) if has_value(fox_solar) else 'unknown' }}
+              {{ (fox_solar_w | float(0) + additional) | round(0) if is_number(fox_solar_w) else 'unknown' }}
             {% else %}
               {{ additional | round(0) }}
             {% endif %}
@@ -2590,7 +2608,7 @@ script:
               {{ states('sensor.solaredge_meter_power') | float(0)
                  * (10 ** (states('sensor.solaredge_meter_power_sf') | int(0))) }}
             {% elif brand == 'foxess' %}
-              {{ fox_grid_w | float(0) if has_value(fox_grid) else 'unknown' }}
+              {{ fox_grid_w | float(0) if is_number(fox_grid_w) else 'unknown' }}
             {% endif %}
           battery_power: >
             {% set additional_battery = states('sensor.additional_battery_power') | float(0) %}
@@ -3132,7 +3150,7 @@ script:
             {% elif brand == 'solaredege' %}
               {{ states('sensor.solaredge_device_model') | string }}
             {% elif brand == 'foxess' %}
-              FoxESS (cloud)
+              FoxESS (Modbus)
             {% endif %}
           retain: true
       - action: mqtt.publish
