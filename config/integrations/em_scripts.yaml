@@ -233,7 +233,7 @@ script:
               - action: script.foxess_set_power
                 data:
                   power_mode: "Forced Charge"
-                  use_requested: true
+                  use_requested: false
               - action: select.select_option
                 target:
                   entity_id: "{{ fox_work_mode }}"
@@ -246,7 +246,7 @@ script:
               - action: script.foxess_set_power
                 data:
                   power_mode: "Forced Discharge"
-                  use_requested: true
+                  use_requested: false
               - action: select.select_option
                 target:
                   entity_id: "{{ fox_work_mode }}"
@@ -1540,6 +1540,8 @@ script:
               - condition: template
                 value_template: "{{ states('input_select.inverter_charge_discharge_mode') in ['Forced Charge', 'Forced Discharge'] }}"
               - action: script.foxess_set_power
+                data:
+                  use_requested: false
           - conditions:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
