@@ -282,6 +282,7 @@
         .replace('BY:','Buy band:')
         .replace('SL:','Sell band:')
         .replace('CT:','Curtailment:')
+        .replace('EREM:','Export Remaining:')
       %}
       {% set translated_content = translated_content
         .replace('CTD:','Curtailment: Disabled (User override)')
