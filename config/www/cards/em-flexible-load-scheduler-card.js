@@ -665,7 +665,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         <details id="load-guide">
           <summary>How to schedule a load</summary>
           <ol>
-            <li>Select <strong>Add load</strong> or use the first row. Enter a name, power in kW, and duration in minutes.
+            <li>Select <strong>Add load</strong>. Enter a name, power in kW, and duration in minutes.
               For example, a 1,500 W dryer is 1.5 kW.</li>
             <li>Choose a <strong>Power source</strong> and, if needed, a <strong>Finish by</strong> time.</li>
             <li>Turn on <strong>Enable schedule</strong>. Select the Home Assistant automation that starts the appliance,
@@ -708,13 +708,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
             before saving. <strong>Clear completed runs</strong> removes finished entries from <strong>Recent load runs</strong>.</p>
         </details>
       </ha-card>`;
-    this._get("add").addEventListener("click", () => this._addLoad(false, true));
+    this._get("add").addEventListener("click", () => this._addLoad());
     this._get("approve").addEventListener("click", () => this._approve());
     this._get("cancel-edit").addEventListener("click", () => this._endEdit());
     for (const status of ["cancelled", "completed"]) {
       this._get("clear-" + status).addEventListener("click", event => this._clearHistory(event.currentTarget, status));
     }
-    this._addLoad(true);
   }
 
   setConfig(config = {}) {
@@ -772,14 +771,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
 
   _get(id) { return this.shadowRoot.getElementById(id); }
 
-  _addLoad(defaults = false, focus = false, job = null) {
+  _addLoad(job = null) {
     const row = this._get("editor").content.firstElementChild.cloneNode(true);
     row.dataset.id = String(this._nextId++);
     const input = field => row.querySelector(`[data-field="${field}"]`);
-    if (defaults) {
-      input("power").value = 1;
-      input("minutes").value = 60;
-    }
     for (const [value, label] of sources) {
       const option = document.createElement("option");
       option.value = value;
@@ -846,7 +841,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     }
     updateScheduleFields();
     this._get("editors").append(row);
-    if (focus) input("name").focus();
+    input("name").focus();
     this._render();
   }
 
@@ -855,7 +850,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     for (const row of this._get("editors").children) row.hidden = true;
     this._get("add").hidden = true;
     this._actionStatus("Editing " + job.name + (job.repeat_id ? " for this occurrence." : "."));
-    this._addLoad(false, true, job);
+    this._addLoad(job);
     this._editing.row.scrollIntoView({ block: "nearest" });
   }
 
@@ -997,10 +992,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       this._renderEditPreview(now);
       return;
     }
-    const state = this._hass?.states?.[entity];
-    const plan = state?.attributes?.energy_plan;
     const now = Date.now();
-    const generated = Date.parse(plan?.meta?.generated_at ?? plan?.summary?.ts);
     const timeZone = this._hass?.config?.time_zone || undefined;
     const showStatus = message => {
       const loads = this._readLoads(timeZone, now, now);
@@ -1009,6 +1001,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       this._get("status").hidden = false;
       this._get("schedule").hidden = true;
     };
+    if (!this._get("editors").childElementCount) {
+      showStatus("Add a load to see suggested times.");
+      return;
+    }
+    const state = this._hass?.states?.[entity];
+    const plan = state?.attributes?.energy_plan;
+    const generated = Date.parse(plan?.meta?.generated_at ?? plan?.summary?.ts);
     if (!plan || ["unavailable", "unknown"].includes(state.state)) {
       showStatus("Waiting for the Energy Manager plan.");
       return;
@@ -1024,10 +1023,6 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       return;
     }
     const loads = this._readLoads(timeZone, now, intervals[0].from);
-    if (!loads.length) {
-      showStatus("Add a load to see suggested times.");
-      return;
-    }
     const siteCapacity = capacity || nonnegative(this._hass.states?.[capacityEntity]?.state);
     const battery = siteCapacity && intervals.every(row =>
       [row.startSoc, row.endSoc, row.floor].every(value => value !== null && value <= 100)) ?
