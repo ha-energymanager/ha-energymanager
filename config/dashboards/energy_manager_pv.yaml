@@ -5,7 +5,9 @@ views:
     path: em-overview
     title: Overview
     layout_columns: 3
-    cards: !include energy_manager_cards.yaml
+    # The layout owns card creation; HA must not eagerly instantiate the catalogue.
+    cards: []
+    em_card_catalogue: !include energy_manager_cards.yaml
   - title: Pricing
     path: em-pricing
     icon: mdi:battery-outline
