@@ -39,7 +39,7 @@ This downloads the bootstrap script from the official production repository and 
 The installer handles the setup in a single run. During startup it:
 
 - Checks that Home Assistant Core meets the minimum version requirement.
-- Checks Marketplace readiness, asks for the required consent, and handles GitHub authentication as prompted.
+- Checks Marketplace readiness, asks for the required consent, and handles GitHub authentication as prompted. Note, drag to copy the code it provides, do not press CTL-C.
 - Requests your **Solcast API key** and **Solcast resource ID(s)**. Solcast is required for Energy Manager optimisation. You may skip entry during installation, but must configure it later.
 - Requests your **Energy Manager key**. If skipped, automated optimisation will not operate until the key is configured.
 
