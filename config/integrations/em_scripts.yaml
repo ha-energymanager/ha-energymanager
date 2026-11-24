@@ -200,24 +200,7 @@ script:
             value_template: "{{ fox_power_entity == '' or fox_mode not in ['Forced Charge', 'Forced Discharge'] }}"
         then:
           - stop: "FoxESS Modbus power entity unavailable or unsupported control mode"
-            error: true
-      - if:
-          - condition: template
-            value_template: "{{ fox_target_kw | float(0) <= 0 }}"
-        then:
-          - action: persistent_notification.create
-            data:
-              title: "FoxESS Control: Zero Power Rejected"
-              notification_id: foxess_em_control_result
-              message: >-
-                Mode: {{ fox_mode }}.
-                Requested: {{ fox_requested_w }} W.
-                Maximum: {{ fox_max_w }} W.
-                Hard limit: {{ fox_hard_w }} W.
-                Calculated: {{ fox_target_kw }} kW.
-                No forced mode was selected.
-          - stop: "FoxESS requested power is zero; forced mode not activated"
-            error: true         
+            error: true  
       - action: number.set_value
         target:
           entity_id: "{{ fox_power_entity }}"
@@ -275,29 +258,6 @@ script:
               entity_id: "{{ fox_work_mode }}"
             data:
               option: "Self Use"
-      - delay: "00:00:05"
-      - variables:
-          fox_power_entity: >-
-            {{ integration_entities('foxess_modbus') | select('match', '^number\.')
-               | select('search', '_force_charge_power$' if fox_mode == 'Forced Charge' else '_force_discharge_power$')
-               | list | first | default('', true) if fox_mode != 'Stop' else '' }}
-          fox_expected: >-
-            {{ 'Force Charge' if fox_mode == 'Forced Charge' else 'Force Discharge' if fox_mode == 'Forced Discharge' else 'Self Use' }}
-      - action: persistent_notification.create
-        data:
-          title: "FoxESS Energy Manager Control Result"
-          notification_id: foxess_em_control_result
-          message: >-
-            Requested: {{ fox_mode }}.
-            Expected integration mode: {{ fox_expected }}.
-            Actual integration mode: {{ states(fox_work_mode) }}.
-            Integration power: {{ states(fox_power_entity) ~ ' kW' if fox_power_entity else 'not applicable' }}.
-            EM requested power: {{ states('input_number.inverter_charge_discharge_power') }} W.
-            EM max charge: {{ states('input_number.inverter_max_charge_power') }} W.
-            EM max discharge: {{ states('input_number.inverter_max_discharge_power') }} W.
-            EM charge hard limit: {{ states('input_number.battery_charge_power_hardlimit') }} W.
-            EM discharge hard limit: {{ states('input_number.battery_discharge_power_hardlimit') }} W.
-            Connection: {{ states(integration_entities('foxess_modbus') | select('match', '^sensor\.') | select('search', '_connection_status$') | list | first | default('', true)) }}.   
   set_inverter_ems_mode:
     alias: "Set Inverter EMS Mode"
     description: "Sets EMS mode based on selected inverter brand"
