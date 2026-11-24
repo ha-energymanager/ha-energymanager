@@ -1,4 +1,4 @@
-/* Energy Manager Layout Manager v8.0.0 */
+/* Energy Manager Layout Manager v9.0.0 — lazy card lifecycle */
 (() => {
   const TAG = 'energy-manager-layout';
   if (customElements.get(TAG)) return;
@@ -63,16 +63,116 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
   const el=(tag,cls='',value)=>{const node=document.createElement(tag);if(cls)node.className=cls;if(value!==undefined)node.textContent=value;return node;};
   const button=(label,fn)=>{const node=el('button','',label);node.type='button';node.addEventListener('click',fn);return node;};
   class Layout extends HTMLElement {
-    constructor(){super();this._config=null;this._configs=[];this._elements=[];this._layout={};this._hass=null;this._rev=0;this._editing=false;this._picker=false;this._catalogueOpen=false;this._pickerDevice='desktop';this._pickerSearch='';this._busy=false;this._dirty=false;this._error='';this._generation=0;this._eligibility='';this._drag=null;this._profiles=[{id:'primary',name:'Overview',cards:{}}];this._activeProfile='primary';this._profileBusy=false;this._histories=new Map();this._historyLimit=40;this._device=this._deviceClass();this._onViewportChange=()=>{const next=this._deviceClass();if(next!==this._device){this._device=next;this._render();}};}
-    setConfig(config){this._config=config;this._configs=config.cards||[];this._layout={};this._render();if(this._hass)this._fetch();}
-    set cards(cards){const next=cards||[];const changed=next.length!==this._elements.length||next.some((v,i)=>v!==this._elements[i]);this._elements=next;if(changed)this._render();}
-    get cards(){return this._elements;}
-    set hass(value){const first=!this._hass;const userChanged=this._hass?.user?.id&&value?.user?.id&&this._hass.user.id!==value.user.id;this._hass=value;if(userChanged){this._profiles=[{id:'primary',name:'Overview',cards:{},selected:null}];this._activeProfile='primary';this._layout={};this._generation++;this._histories.clear();}const signature=this._eligibilitySignature();if(signature!==this._eligibility||userChanged)this._render();if((first||userChanged)&&this._config)this._fetch();}
+    constructor(){super();this._config=null;this._configs=[];this._elements=new Map();this._profilesReady=false;this._fetching=false;this._scrollFrame=null;this._lovelace=null;this._layout={};this._hass=null;this._rev=0;this._editing=false;this._picker=false;this._catalogueOpen=false;this._pickerDevice='desktop';this._pickerSearch='';this._busy=false;this._dirty=false;this._error='';this._generation=0;this._eligibility='';this._visibleEligibility='';this._drag=null;this._profiles=[{id:'primary',name:'Overview',cards:{}}];this._activeProfile='primary';this._profileBusy=false;this._histories=new Map();this._historyLimit=40;this._device=this._deviceClass();this._onViewportChange=()=>{const next=this._deviceClass();if(next!==this._device){this._device=next;this._render();}};}
+    // The catalogue is configuration only. HA's native view must have cards: [].
+    // Otherwise hui-view creates and updates every card before this layout sees it.
+    setConfig(config){
+      if(!Array.isArray(config.em_card_catalogue)|| (config.cards?.length||0)!==0)
+        throw new Error('Energy Manager requires em_card_catalogue and an empty native cards list. Update the dashboard YAML and layout module together.');
+      this._releaseAll();
+      this._generation++;this._fetching=false;this._profilesReady=false;
+      this._config=config;this._configs=config.em_card_catalogue;this._layout={};this._eligibility='';this._visibleEligibility='';
+      this._profiles=[{id:'primary',name:'Overview',cards:{}}];this._activeProfile='primary';
+      this._histories.clear();
+      this._render();this._ensureProfiles();
+    }
+    // Native custom-view interface. The native array is intentionally empty;
+    // never hand our privately owned cards back to hui-view.
+    set cards(cards){
+      if(cards?.length)console.error('Energy Manager: unexpected native cards; check dashboard YAML.');
+    }
+    get cards(){return [];}
+    set hass(value){
+      const userChanged=this._hass?.user?.id&&value?.user?.id&&this._hass.user.id!==value.user.id;
+      this._hass=value;
+      if(userChanged){
+        this._releaseAll();this._profiles=[{id:'primary',name:'Overview',cards:{},selected:null}];
+        this._activeProfile='primary';this._layout={};this._generation++;this._histories.clear();
+        this._profilesReady=false;this._fetching=false;this._eligibility='';this._visibleEligibility='';
+      }
+      if(!this.isConnected||!this._config||!value)return;
+      const signature=this._eligibilitySignature();
+      // Store the signature before rendering. The previous implementation never
+      // updated _eligibility, so virtually every hass update rebuilt the layout.
+      if(signature!==this._eligibility||userChanged){
+        this._eligibility=signature;
+        // An off-tab conditional change must not disconnect/reconnect the
+        // current tab's cards. Only rebuild if displayed content or the open
+        // show/hide picker is actually affected.
+        if(userChanged||(this._profilesReady&&this._visibleEligibilitySignature()!==this._visibleEligibility))this._render();
+      }
+      // Only private, currently mounted wrappers receive state updates.
+      for(const card of this._elements.values()){
+        if(card.isConnected&&card.hass!==value)card.hass=value;
+      }
+      this._ensureProfiles();
+    }
     get hass(){return this._hass;}
+    set lovelace(value){
+      this._lovelace=value;
+      for(const card of this._elements.values())card.preview=!!value?.editMode;
+    }
+    get lovelace(){return this._lovelace;}
     set narrow(value){this._narrow=value;}
     get narrow(){return this._narrow;}
-    connectedCallback(){window.addEventListener('resize',this._onViewportChange);this._device=this._deviceClass();this._render();}
-    disconnectedCallback(){window.removeEventListener('resize',this._onViewportChange);}
+    connectedCallback(){
+      window.addEventListener('resize',this._onViewportChange);
+      this._device=this._deviceClass();this._render();this._ensureProfiles();
+    }
+    disconnectedCallback(){
+      window.removeEventListener('resize',this._onViewportChange);
+      if(this._scrollFrame!==null){cancelAnimationFrame(this._scrollFrame);this._scrollFrame=null;}
+      this._generation++;this._fetching=false;
+      this._releaseAll();this.replaceChildren();
+    }
+    _ensureProfiles(){
+      if(this.isConnected&&this._config&&this._hass&&!this._profilesReady&&!this._fetching)this._fetch();
+    }
+    _releaseCard(index){
+      const card=this._elements.get(index);if(!card)return;
+      // Remove from the owned map first: no subsequent hass updates can reach it.
+      this._elements.delete(index);card.remove();
+      // Clear hui-card's state reference without assigning undefined to the
+      // underlying third-party card. DOM disconnection handles its lifecycle.
+      card.hass=undefined;
+    }
+    _releaseAll(){for(const index of this._elements.keys())this._releaseCard(index);}
+    _desiredCards(){
+      const wanted=new Set();
+      for(let col=0;col<3;col++){
+        for(const index of this._fixed(col))wanted.add(index);
+        for(const index of this._ordered(col)){
+          // An inactive conditional card can have a layout-editing placeholder,
+          // but it must not instantiate an inactive Lovelace card.
+          if(!this._eligible(index))continue;
+          wanted.add(index);
+          const companion=this._companion(index);
+          if(companion>=0&&this._eligible(companion))wanted.add(companion);
+        }
+      }
+      return wanted;
+    }
+    _fixed(col){return this._configs.map((_,i)=>i).filter(i=>{const m=this._meta(i);return m.fixed&&m.defaultColumn===col&&this._eligible(i);}).sort((a,b)=>this._meta(a).defaultOrder-this._meta(b).defaultOrder||a-b);}
+    _companion(index){const id=this._meta(index).id;return this._configs.findIndex(c=>c.view_layout?.em_companion_of===id);}
+    _mountCard(index,slot){
+      if(!this._eligible(index))return;
+      let card=this._elements.get(index);
+      if(!card){
+        // hui-card is the same native wrapper used by HA's hui-view. It
+        // handles lazy custom-element upgrades, visibility and error cards.
+        card=document.createElement('hui-card');
+        card.hass=this._hass;card.preview=!!this._lovelace?.editMode;
+        card.config=structuredClone(this._configs[index]);
+        try{card.load();}
+        catch(error){
+          slot.append(el('div','em-error',`Unable to load ${this._meta(index).name}: ${error.message||error}`));
+          console.error('Energy Manager card load failed',this._meta(index).id,error);return;
+        }
+        this._elements.set(index,card);
+      }
+      slot.append(card);
+      if(card.hass!==this._hass)card.hass=this._hass;
+    }
     _deviceClass(){const w=window.innerWidth;return w<=590?'mobile':w<=900?'tablet':'desktop';}
     _deviceHidden(state){const device=this._picker?this._pickerDevice:this._device;return state.locked&&state.lock_device===device?false:state.hidden||state.hidden_devices.includes(device);}
     _meta(i){const o=this._configs[i]?.view_layout||{};return{id:String(o.em_id||`card-${i}`),name:String(o.em_name||`Card ${i+1}`),fixed:!!o.em_fixed,required:!!o.em_required&&this._activeProfile==='primary',defaultTab:String(o.em_default_tab||'overview'),defaultColumn:Math.max(0,Math.min(2,Number(o.em_column??i%3))),defaultOrder:Number(o.em_order??i)};}
@@ -81,6 +181,14 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
     _placeableInactive(i){return ['energy-control-timer','demand-period-active-notification'].includes(this._meta(i).id);}
     _catalogueEligible(i){const card=this._configs[i],v=card?.view_layout||{};if(v.em_fixed||v.em_duplicate_of||v.em_companion_of)return false;if(Array.isArray(v.em_picker_conditions))return this._conditionsMatch(v.em_picker_conditions);return this._placeableInactive(i)||this._eligible(i);}
     _eligibilitySignature(){return this._configs.map((_,i)=>(this._eligible(i)?'1':'0')+(this._catalogueEligible(i)?'1':'0')).join('');}
+    _visibleEligibilitySignature(){
+      const columns=[0,1,2].map(col=>[this._fixed(col),this._ordered(col).map(index=>{
+        const companion=this._companion(index);
+        return [index,this._eligible(index),companion>=0&&this._eligible(companion)];
+      })]);
+      const picker=this._picker?this._configs.map((_,i)=>this._catalogueEligible(i)):[];
+      return JSON.stringify([columns,picker]);
+    }
     _defaultWidth(i){const v=Number(this._configs[i]?.view_layout?.em_width);return Number.isInteger(v)?Math.max(1,Math.min(12,v)):12;}
     _inverterCardIds(){return new Set(this._configs.map(c=>c.view_layout||{}).filter(v=>v.em_default_tab==='inverter').map(v=>v.em_duplicate_of||v.em_id).filter(Boolean));}
     _state(i){const m=this._meta(i),s=this._layout[m.id]||{};const col=Number.isInteger(s.col)?s.col:m.defaultColumn;const order=Number.isInteger(s.order)?s.order:m.defaultOrder;const inverterDefault=this._activeProfile==='inverter'&&this._inverterCardIds().has(m.id);return{col:Math.max(0,Math.min(2,col)),order, width:(Number.isInteger(s.width)&&s.width>=1&&s.width<=12?s.width:this._defaultWidth(i)),hidden:!m.required&&(typeof s.hidden==='boolean'?s.hidden:(inverterDefault?false:this._configs[i]?.view_layout?.em_hidden===true)),hidden_devices:!m.required&&Array.isArray(s.hidden_devices)?s.hidden_devices.filter(v=>['desktop','tablet','mobile'].includes(v)):[],locked:typeof s.locked==='boolean'?s.locked:this._configs[i]?.view_layout?.em_locked===true,lock_device:['desktop','tablet','mobile'].includes(s.lock_device)?s.lock_device:null};}
@@ -160,10 +268,24 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       if(window.scrollX!==snapshot.windowX||window.scrollY!==snapshot.windowY)
         window.scrollTo(snapshot.windowX,snapshot.windowY);
     }
-    _render(){if(!this.isConnected||!this._config||this._elements.length!==this._configs.length)return;
+    _render(){if(!this.isConnected||!this._config)return;
+      this._eligibility=this._eligibilitySignature();
+      if(this._scrollFrame!==null){cancelAnimationFrame(this._scrollFrame);this._scrollFrame=null;}
+      if(!this._hass||!this._profilesReady){
+        this._releaseAll();this.replaceChildren(el('div','em-status','Loading Energy Manager dashboard…'));return;
+      }
+      if(!customElements.get('hui-card')){
+        // hui-view normally imports hui-card before creating a custom view.
+        // Wait defensively, without constructing cards against an unupgraded tag.
+        if(!this._waitingForCard){this._waitingForCard=true;customElements.whenDefined('hui-card').then(()=>{this._waitingForCard=false;this._render();});}
+        return;
+      }
       if(this._device==='mobile'){
         this._editing=false;this._picker=false;this._catalogueOpen=false;
       }
+      this._visibleEligibility=this._visibleEligibilitySignature();
+      const wanted=this._desiredCards();
+      for(const index of this._elements.keys())if(!wanted.has(index))this._releaseCard(index);
       const scroll=this._scrollSnapshot();
       this.replaceChildren();const style=el('style');style.textContent=CSS;this.append(style);const root=el('div',this._editing?'em-editing':'');this.append(root);
       const toolbar=el('div','em-toolbar');root.append(toolbar);if(this._error)toolbar.append(el('span','em-status',this._error));
@@ -249,10 +371,10 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         panel.append(options);root.append(panel);
       }
       const columns=el('div','em-columns');root.append(columns);for(let col=0;col<3;col++){const column=el('div','em-column');column.dataset.column=String(col);columns.append(column);
-        const fixed=this._configs.map((_,i)=>i).filter(i=>{const m=this._meta(i);return m.fixed&&m.defaultColumn===col&&this._eligible(i);}).sort((a,b)=>this._meta(a).defaultOrder-this._meta(b).defaultOrder||a-b);
-        if(fixed.length){const noticeArea=el('div','em-column-notices');column.append(noticeArea);for(const i of fixed){const tile=el('div','em-row'),slot=el('div','em-card');slot.style.gridColumn=`span ${this._defaultWidth(i)}`;slot.append(this._elements[i]);tile.append(slot);noticeArea.append(tile);}}
+        const fixed=this._fixed(col);
+        if(fixed.length){const noticeArea=el('div','em-column-notices');column.append(noticeArea);for(const i of fixed){const tile=el('div','em-row'),slot=el('div','em-card');slot.style.gridColumn=`span ${this._defaultWidth(i)}`;this._mountCard(i,slot);tile.append(slot);noticeArea.append(tile);}}
         const items=this._ordered(col);let row=[],used=0;
-        const flush=()=>{if(!row.length)return;const rowEl=el('div','em-row');rowEl.dataset.column=String(col);rowEl.dataset.before=String(row[0]);for(const idx of row){const state=this._state(idx),m=this._meta(idx),tile=el('div','em-tile');tile.style.gridColumn=`span ${state.width}`;tile.dataset.id=m.id;const head=el('div','em-edithead'),grip=el('span','em-grip','⠿');grip.title=state.locked?'Unlock this card to move it':'Drag this card';grip.draggable=this._editing&&!state.locked;if(state.locked)grip.classList.add('em-locked');head.append(grip,el('span','em-title',m.name));if(this._editing){const lock=button(state.locked?'🔒 Locked':'🔓 Lock',()=>this._update(idx,{locked:!this._state(idx).locked,lock_device:this._state(idx).locked?null:this._device}));lock.title=state.locked?'Allow this card to be moved or resized':'Prevent moving and resizing this card';if(state.locked)lock.classList.add('em-locked-button');head.append(lock);}if(!m.required&&!(state.locked&&state.lock_device===this._device))head.append(button('Hide',()=>this._hideOnCurrentDevice(idx)));const body=el('div','em-card');body.append(this._elements[idx]);const companion=this._configs.findIndex(c=>c.view_layout?.em_companion_of===m.id);if(companion>=0)body.append(this._elements[companion]);tile.append(head,body);
+        const flush=()=>{if(!row.length)return;const rowEl=el('div','em-row');rowEl.dataset.column=String(col);rowEl.dataset.before=String(row[0]);for(const idx of row){const state=this._state(idx),m=this._meta(idx),tile=el('div','em-tile');tile.style.gridColumn=`span ${state.width}`;tile.dataset.id=m.id;const head=el('div','em-edithead'),grip=el('span','em-grip','⠿');grip.title=state.locked?'Unlock this card to move it':'Drag this card';grip.draggable=this._editing&&!state.locked;if(state.locked)grip.classList.add('em-locked');head.append(grip,el('span','em-title',m.name));if(this._editing){const lock=button(state.locked?'🔒 Locked':'🔓 Lock',()=>this._update(idx,{locked:!this._state(idx).locked,lock_device:this._state(idx).locked?null:this._device}));lock.title=state.locked?'Allow this card to be moved or resized':'Prevent moving and resizing this card';if(state.locked)lock.classList.add('em-locked-button');head.append(lock);}if(!m.required&&!(state.locked&&state.lock_device===this._device))head.append(button('Hide',()=>this._hideOnCurrentDevice(idx)));const body=el('div','em-card');this._mountCard(idx,body);const companion=this._companion(idx);if(this._eligible(idx)&&companion>=0)this._mountCard(companion,body);tile.append(head,body);
           if(this._editing&&!state.locked){const handle=el('div','em-width-handle');handle.title='Drag horizontally to change width';handle.setAttribute('role','separator');handle.setAttribute('aria-label',`Resize ${m.name} horizontally`);tile.append(handle);this._wireResize(handle,tile,idx,col);}
           rowEl.append(tile);
           if(this._editing&&!state.locked){grip.addEventListener('dragstart',event=>{this._drag=idx;tile.classList.add('em-dragging');event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',m.id);});grip.addEventListener('dragend',()=>{tile.classList.remove('em-dragging');this._drag=null;});}
@@ -261,7 +383,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       if(this._editing)root.append(el('p','em-hint','Drag ⠿ to move cards; drag the right-edge handle to resize widths. Lock a card to protect its position and width; unlock it to edit. Undo and Redo apply to this profile only (up to 40 steps). Heights follow content.'));
       this._restoreScroll(scroll);
       // Restore again after HA has laid out the reinserted card elements.
-      requestAnimationFrame(()=>this._restoreScroll(scroll));
+      this._scrollFrame=requestAnimationFrame(()=>{this._scrollFrame=null;if(this.isConnected)this._restoreScroll(scroll);});
     }
     _wireResize(handle,tile,i,col){
       handle.addEventListener('pointerdown',event=>{
@@ -319,15 +441,24 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       const tab=this._profiles.find(t=>t.id===id);if(!tab)return;
       this._activeProfile=id;this._layout=structuredClone(tab.cards||{});this._picker=false;this._catalogueOpen=false;this._render();
     }
-    async _fetch(){if(!this._hass?.callWS)return;const generation=++this._generation;try{
-      const response=await this._hass.callWS({type:'em_dashboard_tabs/get'});
-      if(generation!==this._generation||this._dirty)return;
-      this._rev=response.revision||0;
-      this._profiles=this._normaliseTabs(Array.isArray(response.tabs)?response.tabs:[]);
-      this._activeProfile=this._profiles[0]?.id||'primary';
-      this._layout=structuredClone(this._profiles.find(t=>t.id===this._activeProfile)?.cards||{});
-      this._histories.clear();this._error='';this._render();
-    }catch(e){this._error='Could not load user tabs: '+(e.message||e);this._render();}}
+    async _fetch(){
+      if(!this.isConnected||!this._config||!this._hass)return;
+      const generation=++this._generation;this._fetching=true;
+      try{
+        if(!this._hass.callWS)throw new Error('Home Assistant connection unavailable');
+        const response=await this._hass.callWS({type:'em_dashboard_tabs/get'});
+        if(generation!==this._generation||!this.isConnected||this._dirty)return;
+        this._rev=response.revision||0;
+        const tabs=this._normaliseTabs(Array.isArray(response.tabs)?response.tabs:[]);
+        this._profiles=tabs.length?tabs:[{id:'primary',name:'Overview',cards:{}}];
+        this._activeProfile=this._profiles[0].id;
+        this._layout=structuredClone(this._profiles[0].cards||{});
+        this._histories.clear();this._error='';this._profilesReady=true;this._render();
+      }catch(e){
+        if(generation!==this._generation||!this.isConnected)return;
+        this._error='Could not load user tabs: '+(e.message||e);this._profilesReady=true;this._render();
+      }finally{if(generation===this._generation)this._fetching=false;}
+    }
     async _profileAction(action,params){
       if(this._busy||this._profileBusy)return;
       const previous=structuredClone(this._profiles);
@@ -401,14 +532,13 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         const id='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
         const previous=structuredClone(this._profiles),oldId=this._activeProfile;
         this._profiles.push({id,name,cards,selected:Object.keys(cards)});
-        this._activeProfile=id;this._layout=structuredClone(cards);
+        this._activeProfile=id;this._layout=structuredClone(cards);this._render();
         try{await this._save();}
         catch(error){
           this._profiles=previous;this._activeProfile=oldId;
           this._layout=structuredClone(previous.find(t=>t.id===oldId)?.cards||{});
           throw error;
         }
-        this._render();
       }catch(e){this._error='Import failed: '+(e.message||e);this._render();}
     }
     _payload(){
