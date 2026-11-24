@@ -164,9 +164,52 @@ script:
             ⚠️ MANUAL RESTART REQUIRED
             Go to Settings → System → Restart when ready.
           notification_id: inverter_config_change
+  foxess_set_power:
+    alias: "FoxESS: Set Charge/Discharge Power"
+    mode: queued
+    max: 10
+    fields:
+      power_mode:
+        description: "Forced Charge or Forced Discharge"
+      use_requested:
+        description: "Use requested power when true; configured maximum otherwise"
+    sequence:
+      - variables:
+          fox_mode: "{{ power_mode | default(states('input_select.inverter_charge_discharge_mode'), true) }}"
+          fox_charge_power: >-
+            {{ integration_entities('foxess_modbus') | select('match', '^number\.')
+               | select('search', '_force_charge_power$') | list | first | default('', true) }}
+          fox_discharge_power: >-
+            {{ integration_entities('foxess_modbus') | select('match', '^number\.')
+               | select('search', '_force_discharge_power$') | list | first | default('', true) }}
+          fox_power_entity: "{{ fox_charge_power if fox_mode == 'Forced Charge' else fox_discharge_power if fox_mode == 'Forced Discharge' else '' }}"
+          fox_max_w: >-
+            {{ states('input_number.inverter_max_charge_power' if fox_mode == 'Forced Charge' else 'input_number.inverter_max_discharge_power') | float(0) }}
+          fox_hard_w: >-
+            {{ states('input_number.battery_charge_power_hardlimit' if fox_mode == 'Forced Charge' else 'input_number.battery_discharge_power_hardlimit') | float(0) }}
+          fox_requested_w: "{{ states('input_number.inverter_charge_discharge_power') | float(0) }}"
+          fox_limit_w: "{{ [fox_max_w | float(0), fox_hard_w | float(0)] | min }}"
+          fox_effective_w: >-
+            {{ [fox_requested_w | float(0), fox_limit_w | float(0)] | min if use_requested | default(true) | bool else fox_limit_w | float(0) }}
+          fox_entity_max_kw: "{{ state_attr(fox_power_entity, 'max') | float(0) if fox_power_entity else 0 }}"
+          fox_target_kw: >-
+            {% set requested_kw = [fox_effective_w | float(0), 0] | max / 1000 %}
+            {{ ([requested_kw, fox_entity_max_kw | float(0)] | min if fox_entity_max_kw | float(0) > 0 else requested_kw) | round(3) }}
+      - if:
+          - condition: template
+            value_template: "{{ fox_power_entity == '' or fox_mode not in ['Forced Charge', 'Forced Discharge'] }}"
+        then:
+          - stop: "FoxESS Modbus power entity unavailable or unsupported control mode"
+            error: true
+      - action: number.set_value
+        target:
+          entity_id: "{{ fox_power_entity }}"
+        data:
+          value: "{{ fox_target_kw | float(0) }}"
   foxess_apply_ems_control:
     alias: "FoxESS: Apply Energy Manager Control"
-    mode: restart
+    mode: queued
+    max: 10
     fields:
       requested_mode:
         description: "Optional mode override"
@@ -176,25 +219,9 @@ script:
           fox_work_mode: >-
             {{ integration_entities('foxess_modbus') | select('match', '^select\.')
                | select('search', '_work_mode$') | list | first | default('', true) }}
-          fox_charge_power: >-
-            {{ integration_entities('foxess_modbus') | select('match', '^number\.')
-               | select('search', '_force_charge_power$') | list | first | default('', true) }}
-          fox_discharge_power: >-
-            {{ integration_entities('foxess_modbus') | select('match', '^number\.')
-               | select('search', '_force_discharge_power$') | list | first | default('', true) }}
-          fox_charge_cap: >-
-            {{ [states('input_number.inverter_max_charge_power') | float(0),
-                states('input_number.battery_charge_power_hardlimit') | float(0)] | min }}
-          fox_discharge_cap: >-
-            {{ [states('input_number.inverter_max_discharge_power') | float(0),
-                states('input_number.battery_discharge_power_hardlimit') | float(0)] | min }}
-          fox_requested_w: "{{ states('input_number.inverter_charge_discharge_power') | float(0) }}"
-          fox_target_w: >-
-            {{ [[fox_requested_w | float(0), 0] | max,
-                fox_charge_cap | float(0) if fox_mode == 'Forced Charge' else fox_discharge_cap | float(0)] | min }}
       - if:
           - condition: template
-            value_template: "{{ not fox_work_mode or not has_value(fox_work_mode) or fox_mode not in ['Stop', 'Forced Charge', 'Forced Discharge'] }}"
+            value_template: "{{ fox_work_mode == '' or fox_mode not in ['Stop', 'Forced Charge', 'Forced Discharge'] }}"
         then:
           - stop: "FoxESS Modbus Work Mode unavailable or unsupported control mode"
             error: true
@@ -203,17 +230,10 @@ script:
               - condition: template
                 value_template: "{{ fox_mode == 'Forced Charge' }}"
             sequence:
-              - if:
-                  - condition: template
-                    value_template: "{{ not fox_charge_power or fox_target_w | float(0) <= 0 }}"
-                then:
-                  - stop: "FoxESS Modbus charge power entity unavailable or requested power is zero"
-                    error: true
-              - action: number.set_value
-                target:
-                  entity_id: "{{ fox_charge_power }}"
+              - action: script.foxess_set_power
                 data:
-                  value: "{{ fox_target_w | float(0) / 1000 }}"
+                  power_mode: "Forced Charge"
+                  use_requested: true
               - action: select.select_option
                 target:
                   entity_id: "{{ fox_work_mode }}"
@@ -223,17 +243,10 @@ script:
               - condition: template
                 value_template: "{{ fox_mode == 'Forced Discharge' }}"
             sequence:
-              - if:
-                  - condition: template
-                    value_template: "{{ not fox_discharge_power or fox_target_w | float(0) <= 0 }}"
-                then:
-                  - stop: "FoxESS Modbus discharge power entity unavailable or requested power is zero"
-                    error: true
-              - action: number.set_value
-                target:
-                  entity_id: "{{ fox_discharge_power }}"
+              - action: script.foxess_set_power
                 data:
-                  value: "{{ fox_target_w | float(0) / 1000 }}"
+                  power_mode: "Forced Discharge"
+                  use_requested: true
               - action: select.select_option
                 target:
                   entity_id: "{{ fox_work_mode }}"
@@ -1526,7 +1539,7 @@ script:
             sequence:
               - condition: template
                 value_template: "{{ states('input_select.inverter_charge_discharge_mode') in ['Forced Charge', 'Forced Discharge'] }}"
-              - action: script.foxess_apply_ems_control
+              - action: script.foxess_set_power
           - conditions:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
@@ -1654,10 +1667,10 @@ script:
               - condition: template
                 value_template: "{{ is_state('input_select.inverter_brand', 'foxess') }}"
             sequence:
-              - condition: state
-                entity_id: input_select.inverter_charge_discharge_mode
-                state: "Forced Charge"
-              - action: script.foxess_apply_ems_control
+              - action: script.foxess_set_power
+                data:
+                  power_mode: "Forced Charge"
+                  use_requested: "{{ is_state('input_select.inverter_charge_discharge_mode', 'Forced Charge') }}"
           - conditions:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
@@ -1750,10 +1763,10 @@ script:
               - condition: template
                 value_template: "{{ is_state('input_select.inverter_brand', 'foxess') }}"
             sequence:
-              - condition: state
-                entity_id: input_select.inverter_charge_discharge_mode
-                state: "Forced Discharge"
-              - action: script.foxess_apply_ems_control
+              - action: script.foxess_set_power
+                data:
+                  power_mode: "Forced Discharge"
+                  use_requested: "{{ is_state('input_select.inverter_charge_discharge_mode', 'Forced Discharge') }}"
           - conditions:
               - condition: template
                 value_template: "{{ states('input_select.inverter_brand') == 'fronius' }}"
