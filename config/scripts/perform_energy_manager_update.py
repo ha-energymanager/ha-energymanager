@@ -976,12 +976,39 @@ def get_nodered_status():
 
 def validate_flows_json(file_path):
     try:
-        with open(file_path, 'r') as f:
-            json.load(f)
+        file_size = os.path.getsize(file_path)
+        print(f"Validating downloaded Node-RED flows: {file_size:,} bytes")
+
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
+            flows = json.load(f)
+
+        if not isinstance(flows, list):
+            print(
+                f"❌ Node-RED flows must be a JSON array, "
+                f"got {type(flows).__name__}"
+            )
+            return False
+
+        print(f"✅ Node-RED flows JSON valid: {len(flows)} nodes")
         return True
+
     except json.JSONDecodeError as e:
+        print(
+            f"❌ Node-RED JSON validation failed: "
+            f"{e.msg} at line {e.lineno}, "
+            f"column {e.colno}, character {e.pos}"
+        )
         return False
+
+    except UnicodeError as e:
+        print(f"❌ Node-RED flows encoding error: {e}")
+        return False
+
     except Exception as e:
+        print(
+            f"❌ Node-RED flows validation error: "
+            f"{type(e).__name__}: {e}"
+        )
         return False
 
 def update_status_success(version):
@@ -1823,7 +1850,13 @@ try:
                     update_failures.append("Node-RED flows: downloaded JSON invalid")
                 
                 if os.path.exists(flows_temp_path):
-                    os.remove(flows_temp_path)
+                    if validate_flows_json(flows_temp_path):
+                        os.remove(flows_temp_path)
+                    else:
+                        print(
+                            f"⚠ Invalid downloaded flows retained for "
+                            f"diagnostics: {flows_temp_path}"
+                        )
             else:
                 print("✗ Failed to download Node-RED flows")
                 update_dashboard_status("Failed to download Node-RED flows", "error")
