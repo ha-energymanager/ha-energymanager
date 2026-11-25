@@ -8,7 +8,6 @@ function number(value) {
 function buildRecap(record, formats, live) {
   const planned = number(record.expected_export_kwh);
   const measured = number(record.observed_export_kwh);
-  const target = number(record.target_soc_pct);
   const openingSoc = number(record.opening_soc_pct);
   const reserve = number(record.reserve_soc_pct);
   const observedAt = number(record.reserve_observed_at);
@@ -27,13 +26,8 @@ function buildRecap(record, formats, live) {
   }
   if (planned === null) notes.push("No complete forecast was available when the window opened.");
   if (measured === null) notes.push("The export meter data for this window was incomplete.");
-  if (target !== null && openingSoc !== null) {
-    if (openingSoc >= target) {
-      notes.push("The battery was at or above its " + pct(target) + " target when the window opened.");
-    } else {
-      notes.push("The battery was at " + pct(openingSoc) + " when the window opened, below its " +
-        pct(target) + " target.");
-    }
+  if (openingSoc !== null) {
+    notes.push("The battery started the day at " + pct(openingSoc) + ".");
   }
   if (reserve !== null && observedAt !== null) {
     if (observedAt === record.start) {
