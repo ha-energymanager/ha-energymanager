@@ -3064,6 +3064,12 @@ script:
               {{ states('sensor.alphaess_battery_charge_energy') | float(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
               {{ states('sensor.today_battery_charge') | float(0) }}
+            {% elif brand == 'foxess' %}
+              {% set fox = integration_entities('foxess_modbus')
+                 | select('match', '^sensor\.')
+                 | select('search', '_battery_charge_today$')
+                 | list | first | default('', true) %}
+              {{ states(fox) | float(0) if has_value(fox) else 'unknown' }}
             {% endif %}
           retain: true
       - action: mqtt.publish
@@ -3077,10 +3083,16 @@ script:
             {% elif brand == 'alphaess' %}
               {{ states('sensor.alphaess_battery_discharge_energy') | float(0) }}
             {% elif brand in ['goodwe', 'goodwe_et', 'goodwe_int'] %}
-              {% if states('sensor.goodwe_today_battery_charge') not in ['unknown', 'unavailable'] %}
-                {{ states('sensor.goodwe_today_battery_charge') | float(0) }}
-              {% elif states('sensor.today_battery_charge') not in ['unknown', 'unavailable'] %}
-                {{ states('sensor.today_battery_charge') | float(0) }}
+              {% if states('sensor.goodwe_today_battery_discharge') not in ['unknown', 'unavailable'] %}
+                {{ states('sensor.goodwe_today_battery_discharge') | float(0) }}
+              {% elif states('sensor.today_battery_discharge') not in ['unknown', 'unavailable'] %}
+                {{ states('sensor.today_battery_discharge') | float(0) }}
+            {% elif brand == 'foxess' %}
+              {% set fox = integration_entities('foxess_modbus')
+                 | select('match', '^sensor\.')
+                 | select('search', '_battery_discharge_today$')
+                 | list | first | default('', true) %}
+              {{ states(fox) | float(0) if has_value(fox) else 'unknown' }}
               {% else %}
                 0
               {% endif %}
