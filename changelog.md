@@ -40,6 +40,7 @@
 * Import and Export tallies should now report from each interval, even when value is the same as previous
 * Bug in Node-RED verifications where charge rate was incorrectly set at 100W instead of discharge rate being set at 100W
 * Resource requirements reduced/optimised for PV Dashboard Layout card
+* Fixed Goodwe Total Discharge Today, was set as Charge.
 
 </details>
  
