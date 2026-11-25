@@ -6,12 +6,9 @@ template:
     variables:
       forecast_entity: sensor.solcast_pv_forecast_forecast_today
       pv_total_entity: sensor.pv_energy_total
-      plan_entity: sensor.energy_manager_plan
-      # Optional binary sensors. 'on' means curtailed or offline, respectively.
-      # With no curtailment sensor, use Energy Manager's current curtailment flag.
-      curtailment_entity: null # input_boolean.curtailing_active
+      curtailment_enabled_entity: input_boolean.enable_curtailing
+      curtailment_entity: input_boolean.curtailing_active
       inverter_offline_entity: null
-      # Local time on a five-minute boundary.
       snapshot_time: "04:10:00"
     sensor:
       - name: EM Solar Performance
@@ -82,16 +79,13 @@ template:
             {% if daylight_state not in ['above_horizon', 'below_horizon'] %}
               {% set quality.flags = quality.flags + ['daylight_unknown'] %}
             {% elif daylight %}
-              {% if curtailment_entity is string and curtailment_entity != '' %}
+              {% set curtailment_enabled = states(curtailment_enabled_entity) %}
+              {% if curtailment_enabled == 'off' %}
+                {% set curtail = 'off' %}
+              {% elif curtailment_enabled == 'on' %}
                 {% set curtail = states(curtailment_entity) %}
               {% else %}
-                {% set summary = state_attr(plan_entity, 'blocks_summary') %}
-                {% set plan = state_attr(plan_entity, 'energy_plan') %}
-                {% set updated = as_timestamp(summary.get('ts') or plan.get('meta', {}).get('generated_at'), none)
-                    if summary is mapping and plan is mapping else none %}
-                {% set active = summary.get('curtail_active') if updated is not none and -60 <= ts - updated <= 900
-                    and has_value(plan_entity) else none %}
-                {% set curtail = 'on' if active is sameas true else 'off' if active is sameas false else 'unknown' %}
+                {% set curtail = 'unknown' %}
               {% endif %}
               {% if curtail == 'on' %}
                 {% set quality.flags = quality.flags + ['curtailed'] %}
