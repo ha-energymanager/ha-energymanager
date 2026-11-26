@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from datetime import datetime
 from functools import cmp_to_key
-from math import inf, isfinite
+from math import ceil, floor, inf, isfinite
 
 SOURCES = ("solar", "priority", "battery", "grid")
 EPS = 1e-7
@@ -126,13 +126,50 @@ def add_cost(total, energy, rate):
     return None if total is None or rate is None else total + energy * rate
 
 
-def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None):
-    """Apply the card's battery, reserve, tariff and import-limit model."""
+def must_run(job):
+    return job.get("policy") == "must"
+
+
+def override_energy(job, mix):
+    """Energy outside the requested source; priority keeps its solar diversion."""
+    if not must_run(job) or job["source"] == "grid":
+        return 0
+    battery = mix["battery"] if job["source"] in ("solar", "priority") else 0
+    diverted = mix["diverted"] if job["source"] in ("solar", "battery") else 0
+    return battery + diverted + mix["grid"]
+
+
+def preference_warning(job, mix):
+    if override_energy(job, mix) <= EPS:
+        return ""
+    battery = mix["battery"] if job["source"] in ("solar", "priority") else 0
+    diverted = mix["diverted"] if job["source"] in ("solar", "battery") else 0
+    parts = []
+    for value, label in ((diverted, "solar diverted from charging"), (battery, "battery"), (mix["grid"], "grid")):
+        if value > EPS:
+            amount = "less than 0.01" if value < 0.01 else f"{value:.2f}".rstrip("0").rstrip(".")
+            parts.append(f"{amount} kWh {label}")
+    return ("Must run — power source preference overridden. Estimated energy outside the selected preference: "
+            + " and ".join(parts) + ".")
+
+
+UNVERIFIED_WARNING = ("Must run — the forecast does not cover the entire run. Battery or grid energy may be needed; "
+                      "the full energy mix and power limits cannot yet be verified.")
+BLOCKED_WARNING = ("Must run — the forecast power limits, battery reserve or another scheduled load "
+                   "prevent a verified run at this time.")
+
+
+def covers_window(intervals, start, end):
+    return bool(intervals and intervals[0]["begin"] <= start and intervals[-1]["end"] >= end)
+
+
+def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None, report_all=False):
     ordered = sorted(jobs, key=lambda job: (not job.get("reserved", False),
-                                            SOURCES.index(job["source"]), job["id"]))
+                                            SOURCES.index(job["source"]), must_run(job), job["id"]))
     deficit = protected = grid = solar = 0
     grid_cost = export_cost = 0
-    mix = dict(solar=0, diverted=0, battery=0, grid=0) if report_job is not None else None
+    mixes = {job["id"]: dict(solar=0, diverted=0, battery=0, grid=0)
+             for job in jobs if not job.get("reserved") or job["id"] == report_job}
     for row in intervals:
         end, begin = row["end"], row["begin"]
         active = [job for job in ordered if job["start"] < end and job["end"] > begin]
@@ -165,24 +202,50 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None
             surplus = row["headroom"] * hours
             flexible = row["flexible"] * hours if capacity else 0
             diverted_total = 0
+            allocations = []
+            
             for job in active:
                 if job["start"] >= stop or job["end"] <= start:
                     continue
                 demand = job["power"] * hours
                 direct = min(surplus, demand)
                 surplus -= direct
-                diverted = min(flexible, demand - direct) if job["source"] == "priority" else 0
+                can_divert = job["source"] == "priority" or (job.get("reserved") and must_run(job)
+                                                              and job["source"] in ("solar", "battery"))
+                diverted = min(flexible, demand - direct) if can_divert else 0
                 flexible -= diverted
                 diverted_total += diverted
                 stored = (min(discharge, demand - direct - diverted)
                           if job.get("reserved") or job["source"] in ("battery", "grid") else 0)
                 discharge -= stored
-                imported = max(0, demand - direct - diverted - stored)
-                if imported > EPS and job["source"] != "grid" and not job.get("reserved"):
+                remaining = max(0, demand - direct - diverted - stored)
+                if remaining > EPS and not (job.get("reserved") or job["source"] == "grid" or must_run(job)):
                     return None
+                allocations.append((job, direct, diverted, stored, remaining))
+
+            for job, direct, diverted, stored, remaining in allocations:
+                if must_run(job) and not job.get("reserved"):
+                    if job["source"] in ("solar", "battery"):
+                        extra_diverted = min(flexible, remaining)
+                        diverted += extra_diverted
+                        flexible -= extra_diverted
+                        diverted_total += extra_diverted
+                        remaining -= extra_diverted
+                    if job["source"] in ("solar", "priority"):
+                        extra_stored = min(discharge, remaining)
+                        stored += extra_stored
+                        discharge -= extra_stored
+                        remaining -= extra_stored
+                imported = max(0, remaining)
                 if stored > EPS:
-                    deficit += stored / discharge_eff
-                if mix is not None and job["id"] == report_job:
+                    used = stored / discharge_eff
+                    deficit += used
+                    # Charge targets are forecast objectives, not a physical limit.
+                    # Must run may miss a target; ordinary strict loads still cannot.
+                    if must_run(job):
+                        protected += used
+                mix = mixes.get(job["id"])
+                if mix is not None:
                     mix["solar"] += direct
                     mix["diverted"] += diverted
                     mix["battery"] += stored
@@ -213,10 +276,16 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None
             grid_cost = add_cost(grid_cost, extra_grid, row["buy"])
             export_cost = add_cost(export_cost, export, row["sell"])
     total_cost = None if grid_cost is None or export_cost is None else grid_cost + export_cost
-    if mix is not None:
-        return dict(mix=mix, total_cost=total_cost, grid_cost=grid_cost, export_cost=export_cost,
-                    grid=grid, deficit=deficit)
-    return total_cost, grid, deficit, -solar
+    if report_job is not None or report_all:
+        result = dict(total_cost=total_cost, grid_cost=grid_cost, export_cost=export_cost,
+                      grid=grid, deficit=deficit)
+        if report_job is not None:
+            result["mix"] = mixes.get(report_job, dict(solar=0, diverted=0, battery=0, grid=0))
+        if report_all:
+            result["mixes"] = mixes
+        return result
+    overrides = [override_energy(job, mixes[job["id"]]) for job in jobs if not job.get("reserved")]
+    return total_cost, grid, deficit, -solar, sum(value > EPS for value in overrides), sum(overrides)
 
 
 def edit_impact(intervals, job, reserved, capacity, charge_eff, discharge_eff):
@@ -259,7 +328,19 @@ def overlaps(candidate, placements):
                for job in placements)
 
 
-def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff):
+def assess_must_window(intervals, job, reserved, capacity, charge_eff, discharge_eff):
+    window = dict(job, end=job["start"] + job["duration"])
+    if overlaps(window, reserved):
+        return {"blocked": True, "warning": "Must run — another run using the same automation overlaps this time."}
+    result = replay(intervals, [*reserved, window], capacity, charge_eff, discharge_eff, report_job=job["id"])
+    if result is None:
+        return {"blocked": True, "warning": BLOCKED_WARNING}
+    verified = covers_window(intervals, window["start"], window["end"])
+    return {"blocked": False, "verified": verified,
+            "warning": preference_warning(job, result["mix"]) if verified else UNVERIFIED_WARNING}
+
+
+def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff, details=False):
     if not intervals or not jobs:
         return {}
 
@@ -272,11 +353,20 @@ def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff):
     def compare(a, b):
         left, left_places = a
         right, right_places = b
+        # Never drop a Must run merely to schedule more optional workloads.
+        left_must = sum(must_run(job) for job in left_places)
+        right_must = sum(must_run(job) for job in right_places)
+        if left_must != right_must:
+            return right_must - left_must
         if len(left_places) != len(right_places):
             return len(right_places) - len(left_places)
+
+        for x, y in zip(left[4:], right[4:], strict=True):
+            if abs(x - y) > EPS:
+                return -1 if x < y else 1
         if (left[0] is None) != (right[0] is None):
             return 1 if left[0] is None else -1
-        for x, y in zip(left, right, strict=True):
+        for x, y in zip(left[:4], right[:4], strict=True):
             if abs((x or 0) - (y or 0)) > EPS:
                 return -1 if (x or 0) < (y or 0) else 1
         left_times = [job["start"] for job in left_places]
@@ -293,16 +383,25 @@ def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff):
             result = None if overlaps(candidate, reserved) else evaluate([*reserved, candidate])
             if result is not None:
                 known[start] = result
+
+        if must_run(job) and not known:
+            earliest = max(intervals[0]["begin"], job.get("earliest", intervals[0]["begin"]))
+            latest = min(job["deadline"], intervals[-1]["end"]) - job["duration"]
+            for minute_start in range(ceil(earliest / 60) * 60, floor(latest / 60) * 60 + 1, 60):
+                candidate = window(job, minute_start)
+                result = None if overlaps(candidate, reserved) else evaluate([*reserved, candidate])
+                if result is not None:
+                    known[minute_start] = result
         candidates.append((job, known))
-    candidates.sort(key=lambda pair: (len(pair[1]) or inf, pair[0]["deadline"],
+    candidates.sort(key=lambda pair: (not must_run(pair[0]), len(pair[1]) or inf, pair[0]["deadline"],
                                       SOURCES.index(pair[0]["source"]), -pair[0]["duration"], pair[0]["id"]))
-    empty = ((None, 0, 0, 0), [])
+    empty = ((None, 0, 0, 0, 0, 0), [])
     beam = [empty]
     for job, known in candidates:
         alternatives = list(beam)
         seen = set()
         for _, placed in beam:
-            starts = possible_starts(intervals, job, [*reserved, *placed]) if placed else known
+            starts = sorted(set(known) | set(possible_starts(intervals, job, [*reserved, *placed]))) if placed else known
             for start in starts:
                 candidate = window(job, start)
                 if overlaps(candidate, [*reserved, *placed]):
@@ -317,4 +416,35 @@ def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff):
         beam = sorted(alternatives, key=cmp_to_key(compare))[:BEAM_WIDTH]
         if empty not in beam:
             beam.append(empty)
-    return {job["id"]: job["start"] for job in beam[0][1]}
+    placed = list(beam[0][1])
+    horizon = intervals[-1]["end"]
+    placed_ids = {job["id"] for job in placed}
+    for job in sorted(jobs, key=lambda item: (item["deadline"], item["id"])):
+        if not must_run(job) or job["id"] in placed_ids or job["deadline"] <= horizon:
+            continue
+        latest = job["deadline"] - job["duration"]
+        earliest = max(intervals[0]["begin"], job.get("earliest", intervals[0]["begin"]))
+        windows = [*reserved, *placed]
+        starts = {latest, horizon, earliest}
+        for row in intervals:
+            starts.update((row["begin"], row["end"] - job["duration"]))
+        for other in windows:
+            starts.update((other["start"] - job["duration"], other["end"]))
+        for start in sorted(starts, reverse=True):
+            if not earliest <= start <= latest or start + job["duration"] <= horizon:
+                continue
+            candidate = window(job, start)
+            if not overlaps(candidate, windows) and evaluate([*windows, candidate]) is not None:
+                placed.append(candidate)
+                break
+    if not details:
+        return {job["id"]: job["start"] for job in placed}
+    if not placed:
+        return {}
+    result = replay(intervals, [*reserved, *placed], capacity, charge_eff, discharge_eff, report_all=True)
+    if result is None:
+        return {}
+    return {job["id"]: dict(start=job["start"], verified=covers_window(intervals, job["start"], job["end"]),
+                            warning=preference_warning(job, result["mixes"][job["id"]])
+                            if covers_window(intervals, job["start"], job["end"]) else UNVERIFIED_WARNING)
+            for job in placed}
