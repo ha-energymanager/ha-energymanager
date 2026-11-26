@@ -6,10 +6,10 @@ from datetime import UTC, date, datetime, time as clock_time, timedelta
 from hashlib import sha256
 import json
 import logging
-from math import ceil
+from math import ceil, isfinite
 import re
 from time import time
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 import voluptuous as vol
@@ -31,6 +31,7 @@ PENDING = {"scheduled", "delayed"}
 ACTIVE = PENDING | {"starting", "running", "stopping", "stop_failed"}
 START_GRACE = 59
 MAX_ACTIVE = 12
+MAX_FAVOURITES = 20
 HISTORY = 24
 MANUAL_SKIP = "Today's run was skipped manually."
 
@@ -69,6 +70,25 @@ APPROVAL = {
 }
 
 
+# A favourite is a form configuration, not a schedule approval or a run.
+FAVOURITE_SETTINGS = {
+    vol.Required("name"): vol.All(str, vol.Length(min=1, max=80)),
+    vol.Required("power"): vol.All(vol.Any(float, int), vol.Range(min=0.1, max=1000)),
+    vol.Required("minutes"): vol.All(int, vol.Range(min=1, max=1440)),
+    vol.Required("deadline"): str,
+    vol.Required("source"): vol.In(SOURCES),
+    vol.Required("enabled"): bool,
+    vol.Required("timing"): vol.In(("fixed", "flexible")),
+    vol.Required("policy"): vol.In(("must", "defer", "search")),
+    vol.Required("cadence"): vol.In(("once", "repeated")),
+    vol.Required("search_days"): vol.In((3, 7, None)),
+    vol.Required("weekdays"): vol.All([vol.In(range(7))], vol.Length(max=7)),
+    vol.Required("start_automation"): str,
+    vol.Required("stop_automation"): str,
+}
+FAVOURITE_NAME = vol.All(str, vol.Length(min=1, max=80))
+
+
 def read_clock(value):
     if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
         return None
@@ -89,7 +109,8 @@ async def async_setup(hass, config):
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
-    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_clear_completed, ws_edit, ws_edit_preview):
+    for command in (ws_subscribe, ws_approve, ws_cancel, ws_cancel_repeat, ws_retry_stop, ws_unskip, ws_clear_cancelled, ws_clear_completed, ws_edit, ws_edit_preview,
+                    ws_save_favourite, ws_update_favourite, ws_delete_favourite):
         websocket_api.async_register_command(hass, command)
     if hass.is_running:
         scheduler.start(None)
@@ -191,11 +212,51 @@ async def ws_edit_preview(hass, connection, msg):
     connection.send_result(msg["id"], preview)
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/save_favourite",
+    vol.Required("name"): FAVOURITE_NAME,
+    vol.Required("settings"): FAVOURITE_SETTINGS,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_save_favourite(hass, connection, msg):
+    favourite = await hass.data[DOMAIN].save_favourite(msg["name"], msg["settings"])
+    connection.send_result(msg["id"], favourite)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/update_favourite",
+    vol.Required("favourite_id"): str,
+    vol.Required("name"): FAVOURITE_NAME,
+    vol.Required("settings"): FAVOURITE_SETTINGS,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_update_favourite(hass, connection, msg):
+    favourite = await hass.data[DOMAIN].save_favourite(
+        msg["name"], msg["settings"], msg["favourite_id"])
+    connection.send_result(msg["id"], favourite)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/delete_favourite",
+    vol.Required("favourite_id"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_delete_favourite(hass, connection, msg):
+    await hass.data[DOMAIN].delete_favourite(msg["favourite_id"])
+    connection.send_result(msg["id"])
+
+
 class Scheduler:
     def __init__(self, hass, config):
         self.hass = hass
         self.config = config
         self.store = Store(hass, 1, "em_deferred_workloads", atomic_writes=True)
+        self.favourite_store = Store(hass, 1, "em_flexible_load_favourites", atomic_writes=True)
+        self.favourites = {}
+        self.favourite_lock = asyncio.Lock()
         self.jobs = {}
         self.repeats = {}
         self.listeners = set()
@@ -205,6 +266,9 @@ class Scheduler:
         self.worker = None
 
     async def restore(self):
+        favourite_data = await self.favourite_store.async_load()
+        if favourite_data:
+            self.favourites = {entry["id"]: entry for entry in favourite_data.get("favourites", [])}
         saved = await self.store.async_load()
         if saved:
             self.jobs = {job["id"]: job for job in saved["jobs"]}
@@ -255,6 +319,10 @@ class Scheduler:
             "supports_clear_completed": True,
             "supports_forecast_repeats": True,
             "supports_future_day_search": True,
+            "supports_favourites": True,
+            "max_favourites": MAX_FAVOURITES,
+            "favourites": deepcopy(sorted(self.favourites.values(),
+                                         key=lambda entry: (entry["name"].casefold(), entry["id"]))),
             "repeats": sorted(self.repeats.values(), key=lambda entry: entry["created"], reverse=True),
             "config": self.config,
         }
@@ -276,12 +344,85 @@ class Scheduler:
             raise HomeAssistantError("Could not verify the saved load schedule.")
         self.jobs = jobs
         self.repeats = repeats
+        self.publish_snapshot()
+
+    def publish_snapshot(self):
         data = self.snapshot()
         for listener in tuple(self.listeners):
             try:
                 listener(data)
             except Exception:
                 LOGGER.exception("Could not publish the updated load schedule")
+
+    @staticmethod
+    def validate_favourite(name, settings):
+        name = name.strip()
+        settings = deepcopy(settings)
+        settings["name"] = settings["name"].strip()
+        if not name or not settings["name"]:
+            raise vol.Invalid("Enter a favourite name and a workload name.")
+        if (isinstance(settings["power"], bool) or not isfinite(settings["power"])
+                or type(settings["minutes"]) is not int):
+            raise vol.Invalid("Enter a valid power and whole-minute duration.")
+        finish = read_clock(settings["deadline"]) if settings["deadline"] else None
+        if settings["deadline"] and finish is None:
+            raise vol.Invalid("Choose a valid finish-by time.")
+        days = settings["weekdays"]
+        if len(set(days)) != len(days) or any(type(day) is not int or not 0 <= day <= 6 for day in days):
+            raise vol.Invalid("Choose distinct weekdays.")
+        enabled = settings["enabled"]
+        repeated = settings["cadence"] == "repeated"
+        searching = settings["policy"] == "search"
+        if searching and (settings["timing"] != "flexible" or repeated or not enabled):
+            raise vol.Invalid("Future-day search requires a flexible, one-off scheduled load.")
+        if enabled and (repeated or searching):
+            if finish is None or finish < settings["minutes"]:
+                raise vol.Invalid("Choose a daily finish time that leaves enough time to run.")
+            if repeated and not days:
+                raise vol.Invalid("Select at least one weekday.")
+        if enabled and settings["timing"] == "flexible" and settings["policy"] == "must" and finish is None:
+            raise vol.Invalid("Choose a finish time for Must run.")
+        # Preserve unavailable automation references. Availability is checked again on approval.
+        for field in ("start_automation", "stop_automation"):
+            entity = settings[field]
+            if entity and (len(entity) > 255 or not re.fullmatch(r"automation\.[a-z0-9_]+", entity)):
+                raise vol.Invalid("Choose a valid automation entity.")
+        if enabled and not settings["start_automation"]:
+            raise vol.Invalid("Choose a start automation.")
+        if settings["stop_automation"] and settings["stop_automation"] == settings["start_automation"]:
+            raise vol.Invalid("Choose a different stop automation.")
+        return name, settings
+
+    async def commit_favourites(self, favourites):
+        saved = {"favourites": list(favourites.values())}
+        await self.favourite_store.async_save(saved)
+        if await self.favourite_store.async_load() != saved:
+            raise HomeAssistantError("Could not verify the saved favourites.")
+        self.favourites = favourites
+        self.publish_snapshot()
+
+    async def save_favourite(self, name, settings, favourite_id=None):
+        name, settings = self.validate_favourite(name, settings)
+        async with self.favourite_lock:
+            favourites = dict(self.favourites)
+            if favourite_id is None:
+                if len(favourites) >= MAX_FAVOURITES:
+                    raise vol.Invalid(f"At most {MAX_FAVOURITES} favourites can be saved.")
+                favourite_id = str(uuid4())
+            elif favourite_id not in favourites:
+                raise vol.Invalid("This favourite no longer exists.")
+            entry = {"id": favourite_id, "name": name, "settings": settings}
+            favourites[favourite_id] = entry
+            await self.commit_favourites(favourites)
+            return deepcopy(entry)
+
+    async def delete_favourite(self, favourite_id):
+        async with self.favourite_lock:
+            if favourite_id not in self.favourites:
+                raise vol.Invalid("This favourite no longer exists.")
+            favourites = dict(self.favourites)
+            del favourites[favourite_id]
+            await self.commit_favourites(favourites)
 
     def automation_available(self, entity):
         state = self.hass.states.get(entity) if re.fullmatch(r"automation\.[a-z0-9_]+", entity) else None
