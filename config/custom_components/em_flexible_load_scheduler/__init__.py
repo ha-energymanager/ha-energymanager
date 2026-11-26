@@ -23,7 +23,10 @@ from homeassistant.helpers.event import async_track_point_in_utc_time, async_tra
 from homeassistant.helpers.storage import Store
 
 from .automation_filter import AUTOMATION_EXCLUSIONS, excluded
-from .planner import SOURCES, edit_impact, nonnegative, overlaps, read_forecast, recommend, replay
+from .planner import (
+    SOURCES, BLOCKED_WARNING, UNVERIFIED_WARNING, assess_must_window, covers_window,
+    edit_impact, must_run, nonnegative, overlaps, preference_warning, read_forecast, recommend, replay,
+)
 
 DOMAIN = "em_flexible_load_scheduler"
 LOGGER = logging.getLogger(__name__)
@@ -69,8 +72,6 @@ APPROVAL = {
     vol.Required("stop_automation"): str,
 }
 
-
-# A favourite is a form configuration, not a schedule approval or a run.
 FAVOURITE_SETTINGS = {
     vol.Required("name"): vol.All(str, vol.Length(min=1, max=80)),
     vol.Required("power"): vol.All(vol.Any(float, int), vol.Range(min=0.1, max=1000)),
@@ -320,6 +321,7 @@ class Scheduler:
             "supports_forecast_repeats": True,
             "supports_future_day_search": True,
             "supports_favourites": True,
+            "supports_must_run_fallback": True,
             "max_favourites": MAX_FAVOURITES,
             "favourites": deepcopy(sorted(self.favourites.values(),
                                          key=lambda entry: (entry["name"].casefold(), entry["id"]))),
@@ -382,7 +384,6 @@ class Scheduler:
                 raise vol.Invalid("Select at least one weekday.")
         if enabled and settings["timing"] == "flexible" and settings["policy"] == "must" and finish is None:
             raise vol.Invalid("Choose a finish time for Must run.")
-        # Preserve unavailable automation references. Availability is checked again on approval.
         for field in ("start_automation", "stop_automation"):
             entity = settings[field]
             if entity and (len(entity) > 255 or not re.fullmatch(r"automation\.[a-z0-9_]+", entity)):
@@ -469,7 +470,7 @@ class Scheduler:
 
                 job = self.build_pending_run(item, jobs, now, now)
                 jobs[item["id"]] = job
-                if item.get("start") is not None:
+                if item.get("start") is not None or (must_run(job) and job["start"] is not None):
                     proposed.append(dict(job, end=job["start"] + job["duration"]))
                 elif job["start"] is not None:
                     reserved.append(self.reservation(job))
@@ -478,13 +479,22 @@ class Scheduler:
                 earliest = min(ceil(now / 60) * 60, min(job["start"] for job in proposed))
                 intervals, capacity = self.forecast(earliest, now)
                 args = capacity, self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"]
-                covered = intervals and all(intervals[0]["begin"] <= job["start"]
-                                            and job["end"] <= intervals[-1]["end"] for job in proposed)
+                if not intervals:
+                    raise vol.Invalid("Wait for an up-to-date forecast before saving the suggested schedule.")
+                if any(not must_run(job) and not covers_window(intervals, job["start"], job["end"])
+                       for job in proposed):
+                    raise vol.Invalid("The forecast or approved runs no longer support this schedule. Review the suggested times.")
                 result = await self.hass.async_add_executor_job(
-                    replay, intervals, [*reserved, *proposed], *args,
-                ) if covered else None
+                    replay, intervals, [*reserved, *proposed], *args, None, True,
+                )
                 if result is None:
                     raise vol.Invalid("The forecast or approved runs no longer support this schedule. Review the suggested times.")
+                for job in proposed:
+                    if must_run(job):
+                        jobs[job["id"]]["source_warning"] = (
+                            preference_warning(job, result["mixes"][job["id"]])
+                            if covers_window(intervals, job["start"], job["end"]) else UNVERIFIED_WARNING
+                        )
             self.create_daily_runs(jobs, repeats, now)
             await self.commit(jobs, repeats)
             self.wake.set()
@@ -606,40 +616,43 @@ class Scheduler:
         start = fixed_start
         if start is None:
             start = await self.find_edit_start(job, intervals, reserved, args)
-
-        fallback = start is None and job["policy"] == "must" and (saved or job["timing"] == "flexible")
-        if fallback:
-            start = job["deadline"] - job["duration"]
+        if start is None and saved and must_run(job) and not intervals:
+            start = job.get("start")
+            if start is None:
+                start = job["deadline"] - job["duration"]
 
         end = None if start is None else start + job["duration"]
         impact = None
+        warning = ""
         outcome = "searching" if job["policy"] == "search" else "no_window" if intervals else "no_forecast"
+        if start is None and must_run(job) and intervals:
+            outcome, warning = "blocked", BLOCKED_WARNING
         if start is not None:
             window = dict(job, start=start, end=end)
             if overlaps(window, reserved):
                 outcome = "conflict"
-            else:
-                source = "grid" if fallback else job["source"]
-                impact = await self.hass.async_add_executor_job(
-                    edit_impact, intervals, dict(window, source=source), reserved, *args,
-                ) if intervals else None
-                if fallback:
-                    outcome = "latest_start"
-                elif fixed_start is None:
-                    outcome = "forecast"
-                elif impact is not None:
-                    outcome = "fixed"
-                elif job["policy"] == "must":
-                    outcome = "fixed_must"
-                    impact = await self.hass.async_add_executor_job(
-                        edit_impact, intervals, dict(window, source="grid"), reserved, *args,
-                    ) if intervals else None
+            elif must_run(job):
+                assessment = await self.hass.async_add_executor_job(
+                    assess_must_window, intervals, window, reserved, *args,
+                )
+                warning = assessment["warning"]
+                if assessment["blocked"]:
+                    outcome = "blocked"
+                elif not assessment["verified"]:
+                    outcome = "must_unverified"
                 else:
-                    outcome = "fixed_at_risk"
+                    impact = await self.hass.async_add_executor_job(edit_impact, intervals, window, reserved, *args)
+                    outcome = "must_override" if warning else "fixed" if fixed_start is not None else "forecast"
+            else:
+                impact = await self.hass.async_add_executor_job(
+                    edit_impact, intervals, window, reserved, *args,
+                ) if intervals else None
+                outcome = "forecast" if fixed_start is None else "fixed" if impact is not None else "fixed_at_risk"
 
         return dict(start=start, end=end, deadline=job["deadline"], power=job["power"],
                     duration=job["duration"], source=job["source"], timing=job["timing"],
-                    policy=job["policy"], search=job.get("search"), outcome=outcome, impact=impact)
+                    policy=job["policy"], search=job.get("search"), outcome=outcome, impact=impact,
+                    warning=warning)
 
     async def make_edit_preview(self, item, original, now):
         intervals, reserved, args = self.edit_forecast(item, now)
@@ -654,6 +667,8 @@ class Scheduler:
         message = ""
         if proposed["outcome"] == "conflict":
             message = "That time overlaps another scheduled load using the same automation."
+        elif proposed["outcome"] == "blocked":
+            message = "Change the power, duration or finish time to respect the power limits and other scheduled loads."
         elif not intervals:
             message = "An up-to-date energy forecast is needed to estimate the impact."
         elif proposed["start"] is None and item["timing"] == "fixed":
@@ -663,7 +678,8 @@ class Scheduler:
         elif proposed["start"] is None:
             message = "No time in the forecast fits these settings. The load may be skipped."
 
-        can_save = (changed and proposed["outcome"] != "conflict"
+        can_save = (changed and proposed["outcome"] not in ("conflict", "blocked")
+                    and (not must_run(item) or (bool(intervals) and proposed["start"] is not None))
                     and (item["timing"] != "fixed" or proposed["start"] is not None))
         preview = dict(current=current, proposed=proposed, message=message, changed=changed, can_save=can_save)
         preview["review"] = sha256(json.dumps([item, preview], sort_keys=True).encode()).hexdigest()
@@ -680,6 +696,7 @@ class Scheduler:
             now = time()
             original = self.validate_edit(item, now)
             planned_start = None
+            warning = ""
             if review is not None:
                 preview = await self.make_edit_preview(item, original, now)
                 if preview["review"] != review:
@@ -687,18 +704,23 @@ class Scheduler:
                 if not preview["can_save"]:
                     raise vol.Invalid(preview["message"] or "No changes to save.")
                 planned_start = preview["proposed"]["start"]
-            elif item["timing"] == "fixed":
+                warning = preview["proposed"]["warning"]
+            elif item["timing"] == "fixed" or must_run(item):
                 intervals, reserved, args = self.edit_forecast(item, now)
-                planned_start = await self.find_edit_start(item, intervals, reserved, args)
                 if not intervals:
-                    raise vol.Invalid("Wait for an up-to-date forecast before saving this Fixed run.")
-                if planned_start is None:
-                    raise vol.Invalid("No available window fits before the finish time with these settings.")
+                    raise vol.Invalid("Wait for an up-to-date forecast before saving this run.")
+                estimate = await self.estimate_edit_schedule(item, intervals, reserved, args)
+                planned_start = estimate["start"]
+                warning = estimate["warning"]
+                if planned_start is None or estimate["outcome"] in ("blocked", "conflict"):
+                    raise vol.Invalid(warning or "No available window fits before the finish time with these settings.")
 
             jobs = deepcopy(self.jobs)
             del jobs[item["id"]]
-            item = dict(item, start=planned_start if item["timing"] == "fixed" else None)
+            item = dict(item, start=planned_start if item["timing"] == "fixed" or must_run(item) else None)
             replacement = self.build_pending_run(item, jobs, time(), original["created"], original)
+            if must_run(item):
+                replacement["source_warning"] = warning
             if original.get("repeat_id"):
                 replacement.update(repeat_id=original["repeat_id"], run_date=original["run_date"])
             jobs[item["id"]] = replacement
@@ -798,7 +820,6 @@ class Scheduler:
             latest = deadline - duration if deadline is not None else None
             valid = latest is not None and midnight <= latest
             entry["last_date"] = day_key
-            # Approving after today's latest start takes effect on the next selected day.
             if valid and day_key == entry["approved_on"] and latest < entry["created"]:
                 continue
 
@@ -806,9 +827,9 @@ class Scheduler:
             note = "Waiting for a suitable window."
             status = "delayed"
             if not valid:
-                status, note = "skipped", "Local clock change left no valid time for this run."
+                status, note = ("failed" if must_run(item) else "skipped"), "Local clock change left no valid time for this run."
             elif now - latest > START_GRACE:
-                status, note = "skipped", "Home Assistant missed today's latest start time."
+                status, note = ("failed" if must_run(item) else "skipped"), "Home Assistant missed today's latest start time."
             jobs[child_id] = dict(
                 id=child_id, repeat_id=entry["id"], run_date=day_key,
                 name=item["name"], power=item["power"], duration=duration, source=item["source"],
@@ -843,8 +864,8 @@ class Scheduler:
         end = job["stop_at"] if job["stop_at"] is not None else start + job["duration"]
         if job["status"] in ("stopping", "stop_failed") or (job["status"] == "running" and end <= time()):
             end = max(end, time() + 60)
-        return dict(job, start=start, end=end, source="priority" if job["source"] == "priority" else "grid",
-                    reserved=True)
+        source = job["source"] if job["source"] == "priority" or must_run(job) else "grid"
+        return dict(job, start=start, end=end, source=source, reserved=True)
 
     def approved_windows(self, jobs, excluded_id=None):
         return [self.reservation(job) for job in jobs.values()
@@ -900,7 +921,7 @@ class Scheduler:
         ) else None
         for job in jobs.values():
             if job["status"] in PENDING and job.get("run_date") and job["run_date"] < local_date:
-                job.update(status="skipped", note="The selected day has ended.")
+                job.update(status="failed" if must_run(job) else "skipped", note="The selected day has ended.")
         pending = [job for job in jobs.values() if job["status"] in PENDING]
         if pending:
             starts = []
@@ -934,7 +955,6 @@ class Scheduler:
         unplanned = [job for job in pending if job["timing"] == "flexible" or job["approval"]["start"] is None]
         active = [self.reservation(job) for job in jobs.values()
                   if job["status"] in {"starting", "running", "stopping", "stop_failed"}]
-        # Include the saved start in the search when the timer fires a few seconds late.
         earliest = ceil(now / 60) * 60
         due_times = [job["start"] for job in pending if job["start"] is not None
                      and 0 <= now - job["start"] <= 10]
@@ -943,16 +963,30 @@ class Scheduler:
         intervals, capacity = self.forecast(earliest, now)
         efficiencies = self.config["battery_charge_efficiency"], self.config["battery_discharge_efficiency"]
 
+        async def assess(job, start, reserved, rows=intervals, battery=capacity):
+            return await self.hass.async_add_executor_job(
+                assess_must_window, rows, dict(job, start=start), reserved, battery, *efficiencies,
+            )
+
+        def set_must_failure(job, note, warning=""):
+            job.update(status="failed", note=note, source_warning=warning)
+
         for job in sorted(fixed, key=lambda job: job["start"]):
+            # Fixed keeps its approved start. Update its warning, but don't move it.
+            others = active + [self.reservation(other) for other in fixed
+                               if other["id"] != job["id"] and other["status"] in PENDING]
             if job["start"] > now:
+                if must_run(job):
+                    assessment = await assess(job, job["start"], others)
+                    job["source_warning"] = assessment["warning"]
                 remaining.append(job["start"])
                 continue
             if now - job["start"] > START_GRACE:
-                job.update(status="skipped", note="Home Assistant missed the fixed start time.")
+                job.update(status="failed" if must_run(job) else "skipped", note="Home Assistant missed the fixed start time.")
                 continue
             window = self.reservation(job)
             if overlaps(window, active):
-                job.update(status="skipped", note="Another run using this automation was still active.")
+                job.update(status="failed" if must_run(job) else "skipped", note="Another run using this automation was still active.")
                 continue
             if job["policy"] == "defer":
                 fixed_rows, fixed_capacity = (intervals, capacity) if earliest <= window["start"] else self.forecast(
@@ -963,42 +997,77 @@ class Scheduler:
                                          fixed_capacity, *efficiencies) is None:
                     job.update(status="skipped", note="The forecast no longer supports this fixed window.")
                     continue
+            elif must_run(job):
+                assessment = await assess(job, now, others)
+                if assessment["blocked"]:
+                    set_must_failure(job, "Could not start the fixed Must run without violating known constraints.",
+                                     assessment["warning"])
+                    continue
+                job["source_warning"] = assessment["warning"]
             self.mark_start(job, now, dispatch, "Starting at the approved fixed time.")
             active.append(self.reservation(job))
 
         reserved = active + [self.reservation(job) for job in fixed if job["status"] in PENDING]
-        urgent = [job for job in unplanned if job["policy"] == "must"
-                  and job["deadline"] - job["duration"] <= now]
+        urgent = sorted((job for job in unplanned if must_run(job)
+                         and job["deadline"] - job["duration"] <= now),
+                        key=lambda job: (job["deadline"], job["id"]))
         for job in urgent:
             latest = job["deadline"] - job["duration"]
-            window = dict(job, start=now, end=now + job["duration"])
             if now - latest > START_GRACE:
-                job.update(status="skipped", note="Home Assistant missed the latest start time.")
-            elif overlaps(window, reserved):
-                job.update(status="skipped", note="Another run using this automation was still active.")
-            else:
-                self.mark_start(job, now, dispatch, "Latest start reached. Grid energy may be used.")
+                set_must_failure(job, "Home Assistant missed the latest start time.")
+                continue
+            assessment = await assess(job, now, reserved)
+            if assessment["blocked"]:
+                set_must_failure(job, "Could not start Must run by the deadline without violating known constraints.",
+                                 assessment["warning"])
+                continue
+            job["source_warning"] = assessment["warning"]
+            self.mark_start(job, now, dispatch, "Must run: latest start reached.")
+            reserved.append(self.reservation(job))
+
+        due = sorted((job for job in unplanned if job["status"] in PENDING and must_run(job)
+                      and job["start"] is not None and 0 <= now - job["start"] <= START_GRACE
+                      and (not intervals or intervals[0]["begin"] > job["start"])),
+                     key=lambda job: (job["start"], job["id"]))
+        for job in due:
+            assessment = await assess(job, now, reserved)
+            if not assessment["blocked"]:
+                job["source_warning"] = assessment["warning"]
+                self.mark_start(job, now, dispatch, "Must run: approved start reached; forecast coverage incomplete.")
                 reserved.append(self.reservation(job))
 
         unplanned = [job for job in unplanned if job["status"] in PENDING]
-        starts = await self.hass.async_add_executor_job(
-            recommend, intervals, unplanned, reserved, capacity, *efficiencies) if intervals and unplanned else {}
-        for job in sorted(unplanned, key=lambda job: starts.get(job["id"], float("inf"))):
+        plans = await self.hass.async_add_executor_job(
+            recommend, intervals, unplanned, reserved, capacity, *efficiencies, True) if intervals and unplanned else {}
+        for job in sorted(unplanned, key=lambda job: (plans.get(job["id"], {}).get("start", float("inf")),
+                                                       not must_run(job), job["id"])):
             latest = job["deadline"] - job["duration"]
-            start = starts.get(job["id"])
+            plan = plans.get(job["id"], {})
+            start = plan.get("start")
             if start is not None and start <= now:
                 window = dict(job, start=now, end=now + job["duration"])
                 if not overlaps(window, reserved):
-                    self.mark_start(job, now, dispatch, "Starting in a forecast window.")
-                    reserved.append(self.reservation(job))
-                    continue
+                    if must_run(job):
+                        assessment = await assess(job, now, reserved)
+                        if assessment["blocked"]:
+                            start = None
+                        else:
+                            job["source_warning"] = assessment["warning"] or plan.get("warning", "")
+                    if start is not None:
+                        self.mark_start(job, now, dispatch, "Starting in a forecast window.")
+                        reserved.append(self.reservation(job))
+                        continue
                 start = None
             if job["policy"] == "search":
                 job.update(start=start, status="scheduled" if start is not None else "delayed",
                            note="" if start is not None else "Waiting for a suitable time.")
                 remaining.append(start if start is not None else max(now, latest) + 1)
             elif now >= latest:
-                job.update(status="skipped", note="No suitable window was available by the deadline.")
+                if must_run(job):
+                    set_must_failure(job, "Could not start Must run by the deadline without violating known constraints.",
+                                     BLOCKED_WARNING)
+                else:
+                    job.update(status="skipped", note="No suitable window was available by the deadline.")
             elif start is not None:
                 original = job["approval"]["start"]
                 if job.get("repeat_id") and original is None:
@@ -1007,11 +1076,28 @@ class Scheduler:
                 job.update(start=start, status="delayed" if moved and
                            (original is None or start > original) else "scheduled",
                            note="Moved with the updated forecast." if moved else "")
+                if must_run(job):
+                    job["source_warning"] = plan.get("warning", "")
                 remaining.append(start)
+            elif must_run(job):
+                # If the forecast is temporarily unavailable, retain an explicitly
+                # unverified deadline fallback. Never bypass a known hard limit.
+                fallback = None
+                if not intervals:
+                    candidates = {latest}
+                    for other in reserved:
+                        candidates.update((other["start"] - job["duration"], other["end"]))
+                    for candidate in sorted(candidates, reverse=True):
+                        if now < candidate <= latest and not overlaps(
+                                dict(job, start=candidate, end=candidate + job["duration"]), reserved):
+                            fallback = candidate
+                            break
+                job.update(start=fallback, status="delayed",
+                           note="Waiting for an updated forecast; Must run will be re-evaluated before the deadline.",
+                           source_warning=UNVERIFIED_WARNING if fallback is not None else BLOCKED_WARNING)
+                remaining.append(fallback if fallback is not None else latest)
             else:
-                job.update(start=latest if job["policy"] == "must" else None, status="delayed",
-                           note="Waiting for a suitable window. Will run by the latest start."
-                           if job["policy"] == "must" else "Waiting for a suitable window.")
+                job.update(start=None, status="delayed", note="Waiting for a suitable window.")
                 remaining.append(latest)
 
         remaining.extend(job["stop_at"] for job in jobs.values() if job["status"] == "starting"
