@@ -96,6 +96,24 @@ const policies = {
 const sourceOrder = { solar: 0, priority: 1, battery: 2, grid: 3 };
 const beamWidth = 12;
 const forecastRoundingKw = 0.005;
+const mustRun = job => job.policy === "must" && job.enabled !== false;
+const overrideEnergy = job => !mustRun(job) || job.source === "grid" ? 0 :
+  (job.source === "solar" || job.source === "priority" ? job.battery : 0) +
+  (job.source === "solar" || job.source === "battery" ? job.divertedSolar : 0) + job.grid;
+const unverifiedWarning = "Must run — the forecast does not cover the entire run. Battery or grid energy may be needed; the full energy mix and power limits cannot yet be verified.";
+const blockedWarning = "Must run — forecast power limits, battery reserve or other scheduled loads prevent a verified run before this deadline. Change the power, duration or finish time.";
+
+function preferenceWarning(job, number) {
+  if (job.unverified) return unverifiedWarning;
+  if (!(overrideEnergy(job) > energyTolerance)) return "";
+  const battery = ["solar", "priority"].includes(job.source) ? job.battery : 0;
+  const diverted = ["solar", "battery"].includes(job.source) ? job.divertedSolar : 0;
+  const parts = [[diverted, "solar diverted from charging"], [battery, "battery"], [job.grid, "grid"]]
+    .filter(([value]) => value > energyTolerance)
+    .map(([value, name]) => (value < 0.01 ? "less than 0.01" : number.format(value)) + " kWh " + name);
+  return "Must run — power source preference overridden. Estimated energy outside the selected preference: " +
+    parts.join(" and ") + ".";
+}
 
 function continuousForecast(rows, earliest) {
   const intervals = [];
@@ -120,9 +138,10 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
   }));
   
   jobs.sort((a, b) => Number(Boolean(b.reserved)) - Number(Boolean(a.reserved)) ||
-    sourceOrder[a.source] - sourceOrder[b.source] || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+    sourceOrder[a.source] - sourceOrder[b.source] || Number(mustRun(a)) - Number(mustRun(b)) ||
+    String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
   let deficit = 0;
-  let priorityDeficit = 0;
+  let protectedDeficit = 0;
   let missedChargeTarget = null;
   let grid = 0;
   let solar = 0;
@@ -169,20 +188,49 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
         discharge = Math.min(usable * battery.dischargeEfficiency, powerRoom);
       }
 
+      const allocations = [];
+
       for (const job of intervalJobs) {
         if (job.start >= to || job.end <= from) continue;
         const demand = job.power * hours;
         const direct = Math.min(surplus, demand);
         surplus -= direct;
-        const diverted = job.source === "priority" ? Math.min(flexibleCharge, demand - direct) : 0;
+        const canDivert = job.source === "priority" || (job.reserved && mustRun(job) && ["solar", "battery"].includes(job.source));
+        const diverted = canDivert ? Math.min(flexibleCharge, demand - direct) : 0;
         flexibleCharge -= diverted;
         divertedCharge += diverted;
         const canUseBattery = job.reserved || job.source === "battery" || job.source === "grid";
         const stored = canUseBattery ? Math.min(discharge, demand - direct - diverted) : 0;
         discharge -= stored;
-        const imported = Math.max(0, demand - direct - diverted - stored);
-        if (imported > energyTolerance && job.source !== "grid" && !job.reserved) return null;
-        if (stored > energyTolerance) deficit += stored / battery.dischargeEfficiency;
+        const remaining = Math.max(0, demand - direct - diverted - stored);
+        if (remaining > energyTolerance && !job.reserved && job.source !== "grid" && !mustRun(job)) return null;
+        allocations.push({ job, direct, diverted, stored, remaining });
+      }
+
+      for (const allocation of allocations) {
+        const { job, direct } = allocation;
+        let { diverted, stored, remaining } = allocation;
+        if (mustRun(job) && !job.reserved) {
+          if (["solar", "battery"].includes(job.source)) {
+            const extraDiverted = Math.min(flexibleCharge, remaining);
+            diverted += extraDiverted;
+            flexibleCharge -= extraDiverted;
+            divertedCharge += extraDiverted;
+            remaining -= extraDiverted;
+          }
+          if (["solar", "priority"].includes(job.source)) {
+            const extraStored = Math.min(discharge, remaining);
+            stored += extraStored;
+            discharge -= extraStored;
+            remaining -= extraStored;
+          }
+        }
+        const imported = Math.max(0, remaining);
+        if (stored > energyTolerance) {
+          const used = stored / battery.dischargeEfficiency;
+          deficit += used;
+          if (mustRun(job)) protectedDeficit += used;
+        }
         job.solar += direct;
         job.divertedSolar += diverted;
         job.battery += stored;
@@ -196,7 +244,7 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
       if (divertedCharge > energyTolerance) {
         const deferredEnergy = divertedCharge * battery.chargeEfficiency;
         deficit += deferredEnergy;
-        priorityDeficit += deferredEnergy;
+        protectedDeficit += deferredEnergy;
       }
 
       if (battery && deficit > energyTolerance && row.canSelfConsume &&
@@ -207,11 +255,11 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
         exportUsed += refill;
       }
 
-      priorityDeficit = Math.min(priorityDeficit, deficit);
+      protectedDeficit = Math.min(protectedDeficit, deficit);
       if (battery && to === row.end && row.charge > forecastRoundingKw &&
           row.chargeTarget !== null && row.endSoc >= row.chargeTarget - 0.05) {
         const allowedShortfall = Math.max(0, (baseEnd - row.chargeTarget + 0.05) * battery.capacity / 100);
-        if (deficit - priorityDeficit > allowedShortfall) return null;
+        if (deficit - protectedDeficit > allowedShortfall) return null;
         if (deficit > allowedShortfall && !missedChargeTarget) {
           missedChargeTarget = { at: to, target: row.chargeTarget,
             soc: Math.max(0, baseEnd - deficit / battery.capacity * 100) };
@@ -229,8 +277,12 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
       }
     }
   }
+  const proposed = jobs.filter(job => !job.reserved);
+  const overrides = proposed.map(overrideEnergy);
   return {
-    jobs: jobs.filter(job => !job.reserved), grid, solar, deficit, gridCost, exportImpact, afterRunGrid, afterRunCost, missedChargeTarget,
+    jobs: proposed, grid, solar, deficit, gridCost, exportImpact, afterRunGrid, afterRunCost, missedChargeTarget,
+    overrideCount: overrides.filter(value => value > energyTolerance).length,
+    overrideKwh: overrides.reduce((total, value) => total + value, 0),
     totalCost: gridCost === null || exportImpact === null ? null : gridCost + exportImpact,
   };
 }
@@ -256,7 +308,13 @@ function possibleStarts(intervals, job, latest, placements = []) {
 }
 
 function compareSchedules(a, b) {
+  const mustDifference = b.jobs.filter(mustRun).length - a.jobs.filter(mustRun).length;
+  if (mustDifference) return mustDifference;
   if (b.jobs.length !== a.jobs.length) return b.jobs.length - a.jobs.length;
+  for (const difference of [(a.overrideCount ?? 0) - (b.overrideCount ?? 0),
+      (a.overrideKwh ?? 0) - (b.overrideKwh ?? 0)]) {
+    if (Math.abs(difference) > energyTolerance) return difference;
+  }
   if ((a.totalCost === null) !== (b.totalCost === null)) return a.totalCost === null ? 1 : -1;
   for (const difference of [
     (a.totalCost ?? 0) - (b.totalCost ?? 0), a.grid - b.grid,
@@ -282,7 +340,7 @@ function approvedWindows(jobs, now) {
       if (["stopping", "stop_failed"].includes(job.status) || (job.status === "running" && end <= now)) {
         end = Math.max(end, now + minute);
       }
-      return { ...job, start, end, source: job.source === "priority" ? "priority" : "grid", reserved: true };
+      return { ...job, start, end, source: job.source === "priority" || mustRun(job) ? job.source : "grid", reserved: true };
     }).filter(job => job.end > now);
 }
 
@@ -300,10 +358,18 @@ function recommend(intervals, loads, battery, reserved) {
       .map(start => ({ ...job, start, end: start + job.duration }))
       .map(window => ({ window, result: evaluate([window]) }))
       .filter(candidate => candidate.result);
+    if (mustRun(job) && !candidates.length) {
+      for (let start = Math.ceil(intervals[0].from / minute) * minute; start <= latest; start += minute) {
+        const window = { ...job, start, end: start + job.duration };
+        const result = evaluate([window]);
+        if (result) candidates.push({ window, result });
+      }
+    }
     return { ...job, latest, candidates };
   });
 
-  jobs.sort((a, b) => (a.candidates.length || Infinity) - (b.candidates.length || Infinity) ||
+  jobs.sort((a, b) => Number(mustRun(b)) - Number(mustRun(a)) ||
+    (a.candidates.length || Infinity) - (b.candidates.length || Infinity) ||
     (a.deadline ?? horizon) - (b.deadline ?? horizon) || sourceOrder[a.source] - sourceOrder[b.source] ||
     b.duration - a.duration || a.id - b.id);
 
@@ -329,7 +395,34 @@ function recommend(intervals, loads, battery, reserved) {
 
     if (!schedules.includes(empty)) schedules.push(empty);
   }
-  const best = schedules[0];
+  let best = schedules[0];
+  const placed = [...best.placements];
+  const placedIds = new Set(placed.map(job => job.id));
+  for (const job of [...loads].sort((a, b) => (a.deadline ?? horizon) - (b.deadline ?? horizon) || a.id - b.id)) {
+    if (!mustRun(job) || placedIds.has(job.id) || job.deadline === null || job.deadline <= horizon) continue;
+    const latest = job.deadline - job.duration;
+    const earliest = intervals[0].from;
+    const windows = [...reserved, ...placed];
+    const starts = new Set([latest, horizon, earliest]);
+    for (const row of intervals) {
+      starts.add(row.from);
+      starts.add(row.end - job.duration);
+    }
+    for (const other of windows) {
+      starts.add(other.start - job.duration);
+      starts.add(other.end);
+    }
+    for (const start of [...starts].sort((a, b) => b - a)) {
+      if (start < earliest || start > latest || start + job.duration <= horizon) continue;
+      const window = { ...job, start, end: start + job.duration, unverified: true };
+      if (automationClash(window, windows)) continue;
+      const result = evaluateSchedule(intervals, [...windows, window], battery);
+      if (!result) continue;
+      placed.push(window);
+      best = { ...result, placements: [...placed], finish: Math.max(best.finish, window.end), starts: best.starts + start };
+      break;
+    }
+  }
   if (!best.jobs.length || !reserved.length) return best;
   const baselineAfterRun = evaluateSchedule(intervals, reserved, battery, best.finish);
   for (const key of ["totalCost", "gridCost", "exportImpact", "afterRunGrid", "afterRunCost"]) {
@@ -560,6 +653,13 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         .recommendation[data-source="solar"] { border-inline-start-color: var(--planner-solar); }
         .recommendation[data-source="battery"], .recommendation[data-source="grid"] { border-inline-start-color: var(--planner-grid); }
         .recommendation small { display: block; margin-top: 2px; }
+        .must-run-warning {
+          grid-column: 1 / -1; display: block; padding: 8px 10px; margin-top: 5px;
+          border: 1px solid var(--planner-solar); border-inline-start-width: 3px; border-radius: 6px;
+          background: color-mix(in srgb, var(--planner-solar) 13%, var(--planner-card-bg));
+          color: var(--planner-text); font-size: 13px; font-weight: 600; line-height: 1.4;
+          overflow-wrap: anywhere;
+        }
         .recommendation[data-source="unplaced"] .detail { grid-column: span 2; }
         #totals { margin-top: 10px; font-size: 13px; }
         #effects { margin-top: 5px; }
@@ -714,8 +814,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
               Leave it blank when the appliance finishes on its own.</li>
             <li><strong>Fixed</strong> keeps the first suitable start the scheduler selects for that occurrence.
               <strong>Flexible</strong> can move the start as the forecast changes.</li>
-            <li><strong>Must run</strong> can use battery or grid power if needed. A Fixed load keeps its start time.
-              A Flexible load starts by the latest time that lets it finish by the deadline.</li>
+            <li><strong>Must run</strong> prefers a window that meets the selected power source. If no such window fits,
+              the scheduler finds the best available time using additional solar, battery or grid energy and displays a warning.
+              A Fixed load keeps its start time; a Flexible load can move with the forecast. Power limits, battery reserves
+              and automation conflicts still apply. A time beyond the forecast is shown as unverified.</li>
             <li><strong>${policies.defer}</strong> skips a Fixed load if the forecast cannot cover it at the scheduled time.
               A Flexible load looks for a suitable time before the deadline and skips the run if no time fits.</li>
             <li><strong>Keep looking on future days</strong> is for Flexible, once-off loads. The scheduler uses the same
@@ -960,7 +1062,6 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
 
   _useFavourite(favourite, mode = "use") {
     if (this._editing || this._saving || this._favouriteSaving) return;
-    // Loading a favourite only creates a draft; it never calls approve.
     const copy = { ...favourite, settings: { ...favourite.settings, weekdays: [...favourite.settings.weekdays] } };
     if (mode === "duplicate") {
       copy.id = null;
@@ -1010,7 +1111,6 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       update.disabled = busy;
     }
     const list = this._get("favourite-list");
-    // Avoid rebuilding the controls on forecast updates when their contents have not changed.
     const signature = JSON.stringify([entries, limit, admin, busy]);
     if (this._favouriteSignature === signature) return;
     this._favouriteSignature = signature;
@@ -1321,6 +1421,9 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const outcome = {
       forecast: "Fits the selected power source",
       fixed: "Starts at the saved time",
+      must_override: "Must run · preferred power source overridden",
+      must_unverified: "Must run · forecast coverage incomplete",
+      blocked: "Must run · blocked by known constraints",
       latest_start: "Must run · battery or grid may be used",
       fixed_must: "Must run at the fixed time · battery or grid may be used",
       fixed_at_risk: "May be skipped if the forecast cannot cover the fixed start",
@@ -1331,7 +1434,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     };
     const note = this._get("edit-impact-note");
     const fallback = ["latest_start", "fixed_must"].includes(proposed.outcome);
-    if (fallback) {
+    if (proposed.warning) {
+      note.textContent = proposed.warning + (message ? " " + message : "");
+      note.setAttribute("data-fallback", "");
+    } else if (fallback) {
       const start = time.format(proposed.start * 1000);
       const reason = proposed.outcome === "fixed_must" ? " (the fixed start time)" :
         " if no suitable time opens up before then";
@@ -1397,8 +1503,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const proposed = new Map(schedule.jobs.map(row => [row.id, row.start]));
     const windows = approvedWindows(backend?.jobs ?? [], now);
     const approvalWindows = enabled.filter(row => !row.problem && !row.repeat).flatMap(row => {
-      const start = proposed.get(row.id) ??
-        (row.timing === "flexible" && row.policy === "must" && row.deadline !== null ? row.deadline - row.duration : null);
+      const start = proposed.get(row.id) ?? null;
       return start === null ? [] : [{ ...row, start, end: start + row.duration }];
     });
     const issues = [];
@@ -1407,6 +1512,9 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         "Connecting to the Home Assistant load scheduler.");
     } else {
       if (!backend.automation_exclusions) issues.push("Update the Home Assistant load scheduler.");
+      if (enabled.some(mustRun) && !backend.supports_must_run_fallback) {
+        issues.push("Update and restart the Home Assistant scheduler to use the new Must run behaviour.");
+      }
       const config = backend.config;
       if (config.entity !== entity || config.battery_capacity_entity !== capacityEntity ||
           (config.battery_capacity_kwh ?? null) !== (capacity || null) ||
@@ -1454,6 +1562,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         issues.push(label + "Choose a finish time for Must run.");
       } else if (deadline - row.duration <= now || deadline - now > 48 * hour) {
         issues.push(label + "Choose a finish time within 48 hours that leaves enough time to run.");
+      } else if (!edit && start === null && mustRun(row)) {
+        issues.push(label + blockedWarning);
       } else if (!edit && start === null && row.timing === "fixed") {
         issues.push(label + "A suitable forecast window is required for a Fixed run.");
       } else if (start === null && row.deadline === null) {
@@ -1481,7 +1591,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       enabled.length === 1 ? "Schedule load" : "Schedule " + enabled.length + " loads";
     this._get("approval-note").textContent = issues.join(" ") || (edit ? "" :
       enabled.some(row => row.policy === "must") ?
-      "Must run can use grid energy. A Flexible run may move up to its latest start." :
+      "Must run prefers your selected power source, but may use battery or grid power if necessary. A Flexible run can move with the forecast." :
       "Home Assistant will run this schedule when the dashboard is closed.");
   }
 
@@ -1643,6 +1753,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           job.note;
       }
       summary.append(title, time, note);
+      if (job.source_warning && job.status !== "cancelled") {
+        const warning = document.createElement("div");
+        warning.className = "must-run-warning";
+        warning.textContent = "⚠ " + job.source_warning;
+        summary.append(warning);
+      }
       item.append(summary);
       if (admin && ["scheduled", "delayed", "stop_failed"].includes(job.status)) {
         const action = job.status === "stop_failed" ? "retry_stop" : "cancel";
@@ -1686,7 +1802,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const money = new Intl.NumberFormat(locale, {
       style: "currency", currency: this._hass.config?.currency || "AUD", currencyDisplay: "narrowSymbol",
     });
-    const kwh = value => number.format(value) + " kWh";
+    const kwh = value => value > energyTolerance && value < 0.01 ? "<0.01 kWh" : number.format(value) + " kWh";
     const cost = value => value === null ? "Cost unavailable" : money.format(value);
     const startLabel = date => day.format(date) === day.format(now) ? "Today" : day.format(date);
     const jobs = new Set(schedule.jobs.map(job => job.id));
@@ -1702,38 +1818,56 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       title.textContent = row.name;
       detail.className = "detail";
       item.append(title);
+      let warningText = "";
       if (row.start !== undefined) {
         const time = document.createElement("span");
         const endDay = day.format(row.start) === day.format(row.end) ? "" : day.format(row.end) + ", ";
         time.textContent = startLabel(row.start) + ", " + clock.format(row.start) + "–" + endDay + clock.format(row.end);
-        item.dataset.source = row.grid > energyTolerance ? "grid" : row.battery > energyTolerance ? "battery" : "solar";
-        const mix = [[row.solar, "surplus solar"], [row.divertedSolar, "solar diverted from charging"],
-          [row.battery, "battery"], [row.grid, "grid"]]
-          .filter(([energy]) => energy > energyTolerance)
-          .map(([energy, source]) => kwh(energy) + " " + source);
-        detail.textContent = mix.join(" · ");
-        const amount = document.createElement("small");
-        amount.textContent = "During run · " + cost(row.cost);
-        detail.append(amount);
+        item.dataset.source = row.unverified ? "unverified" : row.grid > energyTolerance ? "grid" : row.battery > energyTolerance ? "battery" : "solar";
+        if (row.unverified) {
+          detail.textContent = "Full energy mix and cost unavailable (forecast coverage incomplete).";
+        } else {
+          const mix = [[row.solar, "surplus solar"], [row.divertedSolar, "solar diverted from charging"],
+            [row.battery, "battery"], [row.grid, "grid"]]
+            .filter(([energy]) => energy > energyTolerance)
+            .map(([energy, source]) => kwh(energy) + " " + source);
+          detail.textContent = mix.join(" · ");
+          const amount = document.createElement("small");
+          amount.textContent = "During run · " + cost(row.cost);
+          detail.append(amount);
+        }
+        warningText = preferenceWarning(row, number);
         item.append(time);
       } else {
         item.dataset.source = "unplaced";
-        const fallback = row.enabled && row.timing === "flexible" && row.policy === "must" && row.deadline !== null;
-        const latest = fallback ? row.deadline - row.duration : null;
-        detail.textContent = row.problem || (row.search ? "Home Assistant will look for a suitable time after you save." : row.repeat ? "Home Assistant will pick a start time on each selected day." : fallback ? "No suitable time found. If you save this schedule, the latest start is " +
-          startLabel(latest) + ", " + clock.format(latest) + "." : row.duration > last.end - intervals[0].from ?
-            "The forecast is too short for this duration." : reserved.length ?
-              "No time in the forecast fits this load. Other scheduled loads may be limiting the available times. Try a later finish time or a shorter run." :
-              "No time in the forecast fits this load. Try a later finish time or a shorter run.");
+        if (row.problem) detail.textContent = row.problem;
+        else if (row.search) detail.textContent = "Home Assistant will look for a suitable time after you save.";
+        else if (row.repeat) detail.textContent = "Home Assistant will pick a start time on each selected day.";
+        else if (mustRun(row)) {
+          detail.textContent = row.timing === "flexible" && row.deadline === null ?
+            "Choose a finish time for Must run." : "The requested run cannot fit within known constraints.";
+          if (row.deadline !== null || row.timing === "fixed") warningText = blockedWarning;
+        } else detail.textContent = row.duration > last.end - intervals[0].from ?
+          "The forecast is too short for this duration." : reserved.length ?
+            "No time in the forecast fits this load. Other scheduled loads may be limiting the available times. Try a later finish time or a shorter run." :
+            "No time in the forecast fits this load. Try a later finish time or a shorter run.";
       }
       item.append(detail);
+      if (warningText) {
+        const warning = document.createElement("div");
+        warning.className = "must-run-warning";
+        warning.textContent = "⚠ " + warningText;
+        item.append(warning);
+      }
       list.append(item);
     }
 
     this._get("horizon").textContent = "Forecast through " + startLabel(last.end) + ", " + clock.format(last.end);
     const totals = this._get("totals");
-    totals.hidden = !schedule.jobs.length;
-    totals.textContent = "Estimated added cost " + cost(schedule.totalCost) +
+    const incomplete = schedule.jobs.some(job => job.unverified);
+    totals.hidden = !schedule.jobs.some(job => job.start < last.end && job.end > intervals[0].from);
+    totals.textContent = (incomplete ? "Forecast-covered portion only · " : "") +
+      "Estimated added cost " + cost(schedule.totalCost) +
       " · Extra grid cost " + cost(schedule.gridCost) + " · Feed-in impact " + cost(schedule.exportImpact);
     const notes = [];
     if (reserved.length) notes.push("Suggested times take other scheduled loads into account.");
