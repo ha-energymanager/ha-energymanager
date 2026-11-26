@@ -427,6 +427,19 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         header ha-icon { color: var(--primary-color, #3b80bd); --mdc-icon-size: 22px; }
         header p, .muted, small { color: var(--planner-muted); font-size: 13px; }
         header p { margin-top: 2px; }
+        #favourites { margin-top: 14px; border: 1px solid var(--planner-line); border-radius: 8px; padding: 10px; }
+        #favourites summary { cursor: pointer; font-weight: 600; }
+        #favourite-count { float: right; font-weight: 400; }
+        #favourite-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+        .favourite-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+          padding: 8px; border: 1px solid var(--planner-line); border-radius: 7px; }
+        .favourite-summary { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+        .favourite-summary small { display: block; }
+        .favourite-actions, .favourite-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+        .favourite-actions button, .favourite-toolbar button { font-size: 12px; }
+        .favourite-toolbar { grid-column: 1 / -1; }
+        .favourite-toolbar input { flex: 1 1 140px; width: auto; }
+        #favourite-status { margin-top: 6px; }
         #editors { display: grid; gap: 12px; margin-top: 14px; }
         .editor {
           display: grid;
@@ -584,6 +597,12 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           <ha-icon icon="mdi:calendar-clock" aria-hidden="true"></ha-icon>
           <div><h2 id="title"></h2><p>Suggested times based on your energy forecast</p></div>
         </header>
+        <details id="favourites" hidden>
+          <summary>★ Favourite workloads <span id="favourite-count" class="muted"></span></summary>
+          <ul id="favourite-list"></ul>
+          <p id="favourite-empty" class="muted" hidden>No favourites yet. Configure a load and save it as a favourite.</p>
+        </details>
+        <p id="favourite-status" class="muted" role="status" hidden></p>
         <div id="editors"></div>
         <template id="editor">
           <div class="editor">
@@ -615,6 +634,11 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
                 <legend>Run on</legend>
                 <div class="weekday-options"></div>
               </fieldset>
+            </div>
+            <div class="favourite-toolbar" hidden>
+              <input class="favourite-name" type="text" maxlength="80" placeholder="Favourite name (optional)" aria-label="Favourite name">
+              <button class="save-favourite" type="button">☆ Save as favourite</button>
+              <button class="update-favourite" type="button" hidden>Update favourite</button>
             </div>
           </div>
         </template>
@@ -704,6 +728,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
             <strong>Finish by</strong> to 4 pm. Choose <strong>Repeated</strong>, <strong>Flexible</strong>,
             <strong>Must run</strong> and <strong>Grid allowed</strong>. The planner looks for a suitable window and can start by noon
             if grid power is needed.</p>
+          <p><strong>Favourite workloads</strong> save reusable settings without scheduling anything.
+            Choose <strong>Use</strong> to create a new draft, or <strong>Edit / rename</strong> and then
+            <strong>Update favourite</strong> to save permanent changes. <strong>Duplicate</strong> creates a draft for a new favourite.
+            A completed run can be loaded again using <strong>Use again</strong>.</p>
           <p>Under <strong>Load schedules</strong>, use <strong>Edit</strong> or <strong>Edit today</strong> to preview changes
             before saving. <strong>Clear completed runs</strong> removes finished entries from <strong>Recent load runs</strong>.</p>
         </details>
@@ -771,7 +799,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
 
   _get(id) { return this.shadowRoot.getElementById(id); }
 
-  _addLoad(job = null) {
+  _addLoad(job = null, favourite = null) {
     const row = this._get("editor").content.firstElementChild.cloneNode(true);
     row.dataset.id = String(this._nextId++);
     const input = field => row.querySelector(`[data-field="${field}"]`);
@@ -817,6 +845,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       clearTimeout(this._editTimer);
       this._editTimer = setTimeout(() => this._render(), 200);
     });
+    row.querySelector(".save-favourite").addEventListener("click", () => this._saveFavourite(row, false));
+    row.querySelector(".update-favourite").addEventListener("click", () => this._saveFavourite(row, true));
     row.querySelector(".remove").hidden = Boolean(job);
     row.querySelector(".remove").addEventListener("click", () => {
       row.remove();
@@ -839,10 +869,189 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       }
       this._editing = { row, job };
     }
+    if (favourite) {
+      const settings = favourite.settings;
+      for (const field of ["name", "power", "minutes", "deadline", "source", "timing", "policy", "cadence"]) {
+        input(field).value = settings[field];
+      }
+      input("enabled").checked = settings.enabled;
+      input("search_days").value = settings.search_days ?? "unlimited";
+      for (const checkbox of row.querySelectorAll(".weekday-options input")) {
+        checkbox.checked = settings.weekdays.includes(Number(checkbox.value));
+      }
+      row.querySelector(".automation-options").hidden = !settings.enabled;
+      this._populateAutomations(row);
+      for (const field of ["start_automation", "stop_automation"]) {
+        const select = input(field);
+        const entity = settings[field];
+        if (entity && !Array.from(select.options).some(option => option.value === entity)) {
+          select.add(new Option(entity + " (unavailable)", entity));
+        }
+        select.value = entity;
+      }
+      row.favouriteId = favourite.id ?? null;
+      row.querySelector(".favourite-name").value = favourite.name ?? "";
+    }
     updateScheduleFields();
     this._get("editors").append(row);
     input("name").focus();
     this._render();
+    return row;
+  }
+
+  _favouriteStatus(message) {
+    const status = this._get("favourite-status");
+    status.textContent = message;
+    status.hidden = !message;
+  }
+
+  _favouriteSettings(row) {
+    const input = field => row.querySelector(`[data-field="${field}"]`);
+    const value = field => input(field).value;
+    return {
+      name: value("name").trim(), power: finite(value("power")), minutes: finite(value("minutes")),
+      deadline: value("deadline"), source: value("source"), enabled: input("enabled").checked,
+      timing: value("timing"), policy: value("policy"), cadence: value("cadence"),
+      search_days: value("search_days") === "unlimited" ? null : Number(value("search_days")),
+      weekdays: Array.from(row.querySelectorAll(".weekday-options input:checked"), item => Number(item.value)),
+      start_automation: value("start_automation"), stop_automation: value("stop_automation"),
+    };
+  }
+
+  async _favouriteRequest(action, payload, message) {
+    if (!this._backend?.supports_favourites || !this._hass?.user?.is_admin ||
+        this._editing || this._saving || this._favouriteSaving) return null;
+    this._favouriteSaving = true;
+    this._renderFavourites();
+    try {
+      const result = await this._hass.callWS({ type: schedulerDomain + "/" + action, ...payload });
+      this._favouriteStatus(message);
+      return result ?? true;
+    } catch (error) {
+      this._favouriteStatus(error?.message || "Could not save the favourite change.");
+      return null;
+    } finally {
+      this._favouriteSaving = false;
+      this._renderFavourites();
+    }
+  }
+
+  async _saveFavourite(row, update) {
+    if (this._editing || this._saving || this._favouriteSaving) return;
+    const settings = this._favouriteSettings(row);
+    if (!settings.name || !(settings.power >= 0.1 && settings.power <= 1000) ||
+        !Number.isInteger(settings.minutes) || settings.minutes < 1 || settings.minutes > 1440) {
+      this._favouriteStatus("Enter a load name, valid power and whole-minute duration before saving a favourite.");
+      return;
+    }
+    const nameField = row.querySelector(".favourite-name");
+    const name = nameField.value.trim() || settings.name;
+    if (update && !row.favouriteId) return;
+    const result = await this._favouriteRequest(update ? "update_favourite" : "save_favourite", {
+      name, settings, ...(update ? { favourite_id: row.favouriteId } : {}),
+    }, update ? "Favourite updated." : "Favourite saved.");
+    if (result?.id) {
+      row.favouriteId = result.id;
+      nameField.value = result.name;
+      this._get("favourites").open = true;
+      this._renderFavourites();
+    }
+  }
+
+  _useFavourite(favourite, mode = "use") {
+    if (this._editing || this._saving || this._favouriteSaving) return;
+    // Loading a favourite only creates a draft; it never calls approve.
+    const copy = { ...favourite, settings: { ...favourite.settings, weekdays: [...favourite.settings.weekdays] } };
+    if (mode === "duplicate") {
+      copy.id = null;
+      copy.name = (copy.name.slice(0, 73) + " (copy)");
+    }
+    const row = this._addLoad(null, copy);
+    row.scrollIntoView({ block: "nearest" });
+    if (mode === "edit" || mode === "duplicate") row.querySelector(".favourite-name").focus();
+    this._favouriteStatus(mode === "edit" ? "Change the settings or name, then select Update favourite." :
+      mode === "duplicate" ? "Change the settings or name, then select Save as favourite." :
+        "Favourite loaded. Review the settings and suggested schedule before scheduling.");
+  }
+
+  _useCompletedRun(job) {
+    if (this._editing || this._saving || this._favouriteSaving) return;
+    const timeZone = this._hass.config?.time_zone || undefined;
+    const finish = job.search?.finish_by ?? (job.deadline == null ? "" : localDateTime(job.deadline * 1000, timeZone).slice(11));
+    const settings = {
+      name: job.name, power: job.power, minutes: job.duration / 60, deadline: finish,
+      source: job.source, enabled: true, timing: job.timing, policy: job.policy, cadence: "once",
+      search_days: job.search ? job.search.days : 3, weekdays: [],
+      start_automation: job.start_automation, stop_automation: job.stop_automation,
+    };
+    const row = this._addLoad(null, { name: job.name, settings });
+    row.scrollIntoView({ block: "nearest" });
+    this._favouriteStatus("Completed run loaded as a new once-off load. Review the finish time before scheduling.");
+  }
+
+  _renderFavourites() {
+    const supported = Boolean(this._backend?.supports_favourites);
+    const admin = Boolean(this._hass?.user?.is_admin);
+    const entries = this._backend?.favourites ?? [];
+    const limit = this._backend?.max_favourites ?? 20;
+    const busy = Boolean(this._editing || this._saving || this._favouriteSaving);
+    const full = entries.length >= limit;
+    const section = this._get("favourites");
+    section.hidden = !supported || !entries.length || Boolean(this._editing);
+    this._get("favourite-count").textContent = entries.length + " / " + limit + " saved";
+    this._get("favourite-empty").hidden = Boolean(entries.length);
+    for (const row of this._get("editors").children) {
+      row.querySelector(".favourite-toolbar").hidden = !supported || !admin || Boolean(this._editing);
+      const save = row.querySelector(".save-favourite");
+      save.disabled = busy || full;
+      save.title = full ? "Delete a favourite before saving another." : "Save a new favourite without scheduling the load.";
+      const update = row.querySelector(".update-favourite");
+      update.hidden = !row.favouriteId || !entries.some(entry => entry.id === row.favouriteId);
+      update.disabled = busy;
+    }
+    const list = this._get("favourite-list");
+    // Avoid rebuilding the controls on forecast updates when their contents have not changed.
+    const signature = JSON.stringify([entries, limit, admin, busy]);
+    if (this._favouriteSignature === signature) return;
+    this._favouriteSignature = signature;
+    list.replaceChildren();
+    for (const entry of entries) {
+      const settings = entry.settings;
+      const item = document.createElement("li");
+      item.className = "favourite-row";
+      const summary = document.createElement("div");
+      summary.className = "favourite-summary";
+      const title = document.createElement("strong");
+      title.textContent = entry.name;
+      const detail = document.createElement("small");
+      detail.textContent = [settings.power + " kW", settings.minutes + " min",
+        sources.find(([value]) => value === settings.source)?.[1] ?? settings.source,
+        settings.deadline ? "Finish by " + settings.deadline : "", settings.cadence === "repeated" ? "Repeated" : ""].filter(Boolean).join(" · ");
+      summary.append(title, detail);
+      const actions = document.createElement("div");
+      actions.className = "favourite-actions";
+      const button = (label, handler, disabled = false) => {
+        const control = document.createElement("button");
+        control.type = "button";
+        control.textContent = label;
+        control.setAttribute("aria-label", label + " " + entry.name);
+        control.disabled = busy || disabled;
+        control.addEventListener("click", handler);
+        actions.append(control);
+      };
+      button("Use", () => this._useFavourite(entry));
+      if (admin) {
+        button("Edit / rename", () => this._useFavourite(entry, "edit"));
+        button("Duplicate", () => this._useFavourite(entry, "duplicate"), full);
+        button("Delete", () => {
+          if (window.confirm("Delete favourite \"" + entry.name + "\"? Existing schedules will not change.")) {
+            this._favouriteRequest("delete_favourite", { favourite_id: entry.id }, "Favourite deleted.");
+          }
+        });
+      }
+      item.append(summary, actions);
+      list.append(item);
+    }
   }
 
   _editRun(job) {
@@ -888,10 +1097,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       const previous = select.value;
       select.replaceChildren(new Option(field === "start_automation" ? "Select an automation" : "None", ""));
       for (const [id, name] of choices) select.add(new Option(name, id));
-      if (previous && !this._automationExcluded(previous) && !choices.some(([id]) => id === previous)) {
+      if (previous && !choices.some(([id]) => id === previous)) {
         select.add(new Option(previous + " (unavailable)", previous));
       }
-      select.value = this._automationExcluded(previous) ? "" : previous;
+      select.value = previous;
     }
   }
 
@@ -980,6 +1189,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     if (!this._config) return;
     const { entity, capacityEntity, capacity, maxAge, chargeEfficiency, dischargeEfficiency } = this._config;
     this._renderApproved();
+    this._renderFavourites();
     this._approval = null;
     this._get("cancel-edit").hidden = !this._editing;
     this._get("cancel-edit").disabled = Boolean(this._saving);
@@ -1453,6 +1663,15 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         item.append(actions);
       } else if (admin && job.status === "skipped" && job.unskip_until > now) {
         item.append(this._runButton("Unskip today", "unskip", job, "Today's run restored."));
+      }
+      if (job.status === "completed" && this._backend?.supports_favourites) {
+        const reuse = document.createElement("button");
+        reuse.type = "button";
+        reuse.textContent = "Use again";
+        reuse.setAttribute("aria-label", "Use again " + job.name);
+        reuse.disabled = Boolean(this._editing || this._saving);
+        reuse.addEventListener("click", () => this._useCompletedRun(job));
+        item.append(reuse);
       }
       (current.has(job.status) ? list : history).append(item);
     }
