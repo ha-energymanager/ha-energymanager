@@ -1,4 +1,4 @@
-/* Energy Manager Layout Manager v9.0.0 — lazy card lifecycle */
+/* Energy Manager Layout Manager v9.1.0 — lazy card lifecycle */
 (() => {
   const TAG = 'energy-manager-layout';
   if (customElements.get(TAG)) return;
@@ -32,7 +32,7 @@ energy-manager-layout .em-option input{margin:0;flex-shrink:0}
 energy-manager-layout .em-option.em-required{opacity:.7;cursor:default}
 energy-manager-layout .em-column-notices{display:flex;flex-direction:column;gap:9px;min-width:0}
 energy-manager-layout .em-column-notices>*{display:block;min-width:0;width:100%}
-energy-manager-layout .em-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;align-items:start}
+energy-manager-layout .em-columns{display:grid;grid-template-columns:repeat(var(--em-columns,3),minmax(0,1fr));gap:9px;align-items:start}
 energy-manager-layout .em-column{display:flex;flex-direction:column;gap:9px;min-width:0}
 energy-manager-layout .em-row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:9px;align-items:start;min-width:0}
 energy-manager-layout .em-tile{min-width:0;position:relative;flex-shrink:0;display:flex;flex-direction:column}
@@ -56,10 +56,11 @@ energy-manager-layout .em-drop-end{min-height:32px;border:1px dashed transparent
 energy-manager-layout .em-editing .em-drop-end{border-color:var(--divider-color,#555)}
 energy-manager-layout .em-drop-end.em-target{border:2px dashed var(--primary-color,#03a9f4)}
 energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
-@media(max-width:900px){energy-manager-layout .em-columns{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){energy-manager-layout .em-toolbar{flex-wrap:wrap}energy-manager-layout .em-tabs{flex:1 1 100%}energy-manager-layout .em-toolbar-actions{flex:1 1 100%}}
 @media(max-width:590px){energy-manager-layout .em-toolbar-actions{display:none}energy-manager-layout .em-tabs{flex:1 1 100%;width:100%}}
 `;
+  const DEFAULT_COLUMNS=3, MAX_COLUMNS=8;
+  const validColumns=n=>Number.isInteger(n)&&n>=1&&n<=MAX_COLUMNS;
   const el=(tag,cls='',value)=>{const node=document.createElement(tag);if(cls)node.className=cls;if(value!==undefined)node.textContent=value;return node;};
   const button=(label,fn)=>{const node=el('button','',label);node.type='button';node.addEventListener('click',fn);return node;};
   class Layout extends HTMLElement {
@@ -130,20 +131,39 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
     }
     _releaseCard(index){
       const card=this._elements.get(index);if(!card)return;
-      // Remove from the owned map first: no subsequent hass updates can reach it.
       this._elements.delete(index);card.remove();
-      // Clear hui-card's state reference without assigning undefined to the
-      // underlying third-party card. DOM disconnection handles its lifecycle.
       card.hass=undefined;
     }
     _releaseAll(){for(const index of this._elements.keys())this._releaseCard(index);}
+    _columnCount(){const n=this._profiles.find(t=>t.id===this._activeProfile)?.columns;return validColumns(n)?n:DEFAULT_COLUMNS;}
+    _columnIds(){return Array.from({length:this._columnCount()},(_,i)=>i);}
+    _setColumnCount(n){const tab=this._profiles.find(t=>t.id===this._activeProfile);if(tab)tab.columns=n;}
+    _changeColumns(n){
+      if(this._profileBusy||!validColumns(n)||n===this._columnCount())return;
+      const old=this._columnCount(),before=this._snapshot();
+      if(n<old){
+        const cards={...structuredClone(this._layout),...this._payload()};
+        const selected=this._selectedIds(this._profiles.find(t=>t.id===this._activeProfile));
+        const entries=Object.entries(cards).filter(([,v])=>Number.isInteger(v.col));
+        const moving=entries.filter(([,v])=>v.col>=n).sort((a,b)=>a[1].col-b[1].col||a[1].order-b[1].order);
+        if(moving.some(([id,v])=>v.locked&&selected.has(id))){
+          this._error='Unlock cards in the columns being removed before reducing the column count.';this._render();return;
+        }
+        const dest=n-1;
+        const remaining=entries.filter(([,v])=>v.col===dest).sort((a,b)=>a[1].order-b[1].order);
+        let last=Math.max(-1,...remaining.map(([,v])=>Number.isInteger(v.order)?v.order:-1));
+        if(last+moving.length>1000){remaining.forEach(([,v],i)=>{v.order=i;});last=remaining.length-1;}
+        moving.forEach(([,v])=>{v.col=dest;v.order=++last;});
+        this._layout=cards;
+      }
+      this._setColumnCount(n);this._error='';
+      if(this._record(before)){this._render();this._save();}
+    }
     _desiredCards(){
       const wanted=new Set();
-      for(let col=0;col<3;col++){
+      for(let col=0;col<this._columnCount();col++){
         for(const index of this._fixed(col))wanted.add(index);
         for(const index of this._ordered(col)){
-          // An inactive conditional card can have a layout-editing placeholder,
-          // but it must not instantiate an inactive Lovelace card.
           if(!this._eligible(index))continue;
           wanted.add(index);
           const companion=this._companion(index);
@@ -152,14 +172,12 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       }
       return wanted;
     }
-    _fixed(col){return this._configs.map((_,i)=>i).filter(i=>{const m=this._meta(i);return m.fixed&&m.defaultColumn===col&&this._eligible(i);}).sort((a,b)=>this._meta(a).defaultOrder-this._meta(b).defaultOrder||a-b);}
+    _fixed(col){return this._configs.map((_,i)=>i).filter(i=>{const m=this._meta(i);return m.fixed&&Math.min(this._columnCount()-1,m.defaultColumn)===col&&this._eligible(i);}).sort((a,b)=>this._meta(a).defaultOrder-this._meta(b).defaultOrder||a-b);}
     _companion(index){const id=this._meta(index).id;return this._configs.findIndex(c=>c.view_layout?.em_companion_of===id);}
     _mountCard(index,slot){
       if(!this._eligible(index))return;
       let card=this._elements.get(index);
       if(!card){
-        // hui-card is the same native wrapper used by HA's hui-view. It
-        // handles lazy custom-element upgrades, visibility and error cards.
         card=document.createElement('hui-card');
         card.hass=this._hass;card.preview=!!this._lovelace?.editMode;
         card.config=structuredClone(this._configs[index]);
@@ -182,7 +200,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
     _catalogueEligible(i){const card=this._configs[i],v=card?.view_layout||{};if(v.em_fixed||v.em_duplicate_of||v.em_companion_of)return false;if(Array.isArray(v.em_picker_conditions))return this._conditionsMatch(v.em_picker_conditions);return this._placeableInactive(i)||this._eligible(i);}
     _eligibilitySignature(){return this._configs.map((_,i)=>(this._eligible(i)?'1':'0')+(this._catalogueEligible(i)?'1':'0')).join('');}
     _visibleEligibilitySignature(){
-      const columns=[0,1,2].map(col=>[this._fixed(col),this._ordered(col).map(index=>{
+      const columns=this._columnIds().map(col=>[this._fixed(col),this._ordered(col).map(index=>{
         const companion=this._companion(index);
         return [index,this._eligible(index),companion>=0&&this._eligible(companion)];
       })]);
@@ -191,7 +209,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
     }
     _defaultWidth(i){const v=Number(this._configs[i]?.view_layout?.em_width);return Number.isInteger(v)?Math.max(1,Math.min(12,v)):12;}
     _inverterCardIds(){return new Set(this._configs.map(c=>c.view_layout||{}).filter(v=>v.em_default_tab==='inverter').map(v=>v.em_duplicate_of||v.em_id).filter(Boolean));}
-    _state(i){const m=this._meta(i),s=this._layout[m.id]||{};const col=Number.isInteger(s.col)?s.col:m.defaultColumn;const order=Number.isInteger(s.order)?s.order:m.defaultOrder;const inverterDefault=this._activeProfile==='inverter'&&this._inverterCardIds().has(m.id);return{col:Math.max(0,Math.min(2,col)),order, width:(Number.isInteger(s.width)&&s.width>=1&&s.width<=12?s.width:this._defaultWidth(i)),hidden:!m.required&&(typeof s.hidden==='boolean'?s.hidden:(inverterDefault?false:this._configs[i]?.view_layout?.em_hidden===true)),hidden_devices:!m.required&&Array.isArray(s.hidden_devices)?s.hidden_devices.filter(v=>['desktop','tablet','mobile'].includes(v)):[],locked:typeof s.locked==='boolean'?s.locked:this._configs[i]?.view_layout?.em_locked===true,lock_device:['desktop','tablet','mobile'].includes(s.lock_device)?s.lock_device:null};}
+    _state(i){const m=this._meta(i),s=this._layout[m.id]||{};const col=Number.isInteger(s.col)?s.col:m.defaultColumn;const order=Number.isInteger(s.order)?s.order:m.defaultOrder;const inverterDefault=this._activeProfile==='inverter'&&this._inverterCardIds().has(m.id);return{col:Math.max(0,Math.min(this._columnCount()-1,col)),order, width:(Number.isInteger(s.width)&&s.width>=1&&s.width<=12?s.width:this._defaultWidth(i)),hidden:!m.required&&(typeof s.hidden==='boolean'?s.hidden:(inverterDefault?false:this._configs[i]?.view_layout?.em_hidden===true)),hidden_devices:!m.required&&Array.isArray(s.hidden_devices)?s.hidden_devices.filter(v=>['desktop','tablet','mobile'].includes(v)):[],locked:typeof s.locked==='boolean'?s.locked:this._configs[i]?.view_layout?.em_locked===true,lock_device:['desktop','tablet','mobile'].includes(s.lock_device)?s.lock_device:null};}
     _selectedIds(tab){
       const canonical=new Map(this._configs.map(c=>[c.view_layout?.em_id,c.view_layout?.em_duplicate_of||c.view_layout?.em_id]));
       if(Array.isArray(tab?.selected))return new Set(tab.selected.map(id=>canonical.get(id)||id));
@@ -209,6 +227,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
     _normaliseTabs(tabs){
       const aliases=new Map(this._configs.map(c=>[c.view_layout?.em_id,c.view_layout?.em_duplicate_of]).filter(([,target])=>!!target));
       for(const tab of tabs){
+        if(!validColumns(tab.columns))tab.columns=DEFAULT_COLUMNS;
         if(Array.isArray(tab.selected))tab.selected=[...new Set(tab.selected.map(id=>aliases.get(id)||id))];
         for(const [oldId,target] of aliases){if(Object.prototype.hasOwnProperty.call(tab.cards||{},oldId)){
           if(!Object.prototype.hasOwnProperty.call(tab.cards,target))tab.cards[target]=tab.cards[oldId];
@@ -223,7 +242,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       if(!this._histories.has(this._activeProfile))this._histories.set(this._activeProfile,{undo:[],redo:[]});
       return this._histories.get(this._activeProfile);
     }
-    _snapshot(){return JSON.stringify(this._layout);}
+    _snapshot(){return JSON.stringify({columns:this._columnCount(),cards:this._layout});}
     _record(before){
       const after=this._snapshot();
       if(after===before)return false;
@@ -241,7 +260,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       if(!from.length)return;
       to.push(this._snapshot());
       if(to.length>this._historyLimit)to.shift();
-      this._layout=JSON.parse(from.pop());
+      const snapshot=JSON.parse(from.pop());this._setColumnCount(snapshot.columns);this._layout=snapshot.cards;
       this._render();
       this._save();
     }
@@ -275,8 +294,6 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         this._releaseAll();this.replaceChildren(el('div','em-status','Loading Energy Manager dashboard…'));return;
       }
       if(!customElements.get('hui-card')){
-        // hui-view normally imports hui-card before creating a custom view.
-        // Wait defensively, without constructing cards against an unupgraded tag.
         if(!this._waitingForCard){this._waitingForCard=true;customElements.whenDefined('hui-card').then(()=>{this._waitingForCard=false;this._render();});}
         return;
       }
@@ -316,15 +333,21 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       const customise=button(this._editing?'✓ Finish customising':'✥ Customise',()=>{this._editing=!this._editing;this._render();});actions.append(customise);
       actions.append(button('☷ Show / hide',()=>{this._picker=!this._picker;this._render();}));
       if(this._editing){
+        const columnLabel=el('label','','Columns: ');
+        const columnSelect=el('select','em-profile-select');columnSelect.setAttribute('aria-label','Number of columns');
+        columnSelect.style.minWidth='0';columnSelect.style.width='58px';
+        for(let n=1;n<=MAX_COLUMNS;n++){const option=el('option','',String(n));option.value=String(n);columnSelect.append(option);}
+        columnSelect.value=String(this._columnCount());columnSelect.addEventListener('change',()=>this._changeColumns(Number(columnSelect.value)));
+        columnSelect.disabled=this._profileBusy;columnLabel.append(columnSelect);actions.append(columnLabel);
         const history=this._history();
         const undo=button('↶ Undo',()=>this._travel('undo'));undo.disabled=!history.undo.length||this._profileBusy;actions.append(undo);
         const redo=button('↷ Redo',()=>this._travel('redo'));redo.disabled=!history.redo.length||this._profileBusy;actions.append(redo);
-        actions.append(button('↺ Reset defaults',()=>{if(this._profileBusy)return;if(confirm('Restore the default arrangement and visibility of all optional cards?')){const before=this._snapshot();this._layout={};if(this._record(before)){this._render();this._save();}}}));
+        actions.append(button('↺ Reset defaults',()=>{if(this._profileBusy)return;if(confirm('Restore three columns and the default arrangement and visibility of all optional cards?')){const before=this._snapshot();this._setColumnCount(DEFAULT_COLUMNS);this._layout={};if(this._record(before)){this._render();this._save();}}}));
         actions.append(button('⟳ Reload saved',()=>{if(this._busy||this._profileBusy)return;this._dirty=false;this._histories.delete(this._activeProfile);this._fetch();}));
       }
       if(this._picker){
         const panel=el('div','em-picker');panel.append(el('strong','','Show / hide'));
-        panel.append(el('p','em-hint','Tick a card to show it on this tab for the selected device. The dashboard below previews that device’s selected cards; its column layout still follows your screen size. Closing Show / hide restores your actual device view.'));
+        panel.append(el('p','em-hint','Tick a card to show it on this tab for the selected device. The dashboard below previews that device’s selected cards; its column count follows the current tab setting. Closing Show / hide restores your actual device view.'));
         const controls=el('div','em-picker-toolbar'),tabs=el('div','em-device-tabs');
         const currentDevice=this._pickerDevice;
         for(const device of ['desktop','tablet','mobile']){
@@ -370,7 +393,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         search.addEventListener('input',()=>{this._pickerSearch=search.value;filter();});filter();
         panel.append(options);root.append(panel);
       }
-      const columns=el('div','em-columns');root.append(columns);for(let col=0;col<3;col++){const column=el('div','em-column');column.dataset.column=String(col);columns.append(column);
+      const columns=el('div','em-columns');columns.style.setProperty('--em-columns',String(this._columnCount()));root.append(columns);for(let col=0;col<this._columnCount();col++){const column=el('div','em-column');column.dataset.column=String(col);columns.append(column);
         const fixed=this._fixed(col);
         if(fixed.length){const noticeArea=el('div','em-column-notices');column.append(noticeArea);for(const i of fixed){const tile=el('div','em-row'),slot=el('div','em-card');slot.style.gridColumn=`span ${this._defaultWidth(i)}`;this._mountCard(i,slot);tile.append(slot);noticeArea.append(tile);}}
         const items=this._ordered(col);let row=[],used=0;
@@ -402,7 +425,6 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         const move=e=>{
           if(e.pointerId!==event.pointerId)return;
           requested=Math.max(1,Math.min(12,original+Math.round((e.clientX-startX)/unit)));
-          // Preview only the resized tile, without rebuilding the HA cards during the gesture.
           tile.style.gridColumn=`span ${requested}`;
           handle.title=`Width: ${requested}/12`;
         };
@@ -422,7 +444,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       });
     }
     _wireDrop(target,col,before){target.addEventListener('dragover',event=>{if(this._drag===null||this._state(this._drag).locked)return;event.preventDefault();event.dataTransfer.dropEffect='move';target.classList.add('em-target');});target.addEventListener('dragleave',()=>target.classList.remove('em-target'));target.addEventListener('drop',event=>{event.preventDefault();target.classList.remove('em-target');const i=this._drag;this._drag=null;if(i===null||i===before||this._state(i).locked)return;this._move(i,col,before);});}
-    _move(i,col,before){if(this._profileBusy||this._state(i).locked)return;const snapshot=this._snapshot();const all=[0,1,2].map(c=>this._ordered(c,true));for(const arr of all){const at=arr.indexOf(i);if(at!==-1)arr.splice(at,1);}const dest=all[col];const pos=before===null?dest.length:dest.indexOf(before);dest.splice(pos<0?dest.length:pos,0,i);for(let c=0;c<3;c++){const previous=this._ordered(c,true).filter(idx=>this._state(idx).locked);for(const lockedIdx of previous){if(all[c].indexOf(lockedIdx)!==this._ordered(c,true).indexOf(lockedIdx))return;}}for(let c=0;c<3;c++)all[c].forEach((index,order)=>{const m=this._meta(index);this._layout[m.id]={...this._state(index),col:c,order};});if(this._record(snapshot)){this._render();this._save();}}
+    _move(i,col,before){if(this._profileBusy||!this._columnIds().includes(col)||this._state(i).locked)return;const snapshot=this._snapshot();const all=this._columnIds().map(c=>this._ordered(c,true));for(const arr of all){const at=arr.indexOf(i);if(at!==-1)arr.splice(at,1);}const dest=all[col];const pos=before===null?dest.length:dest.indexOf(before);dest.splice(pos<0?dest.length:pos,0,i);for(let c=0;c<this._columnCount();c++){const previous=this._ordered(c,true).filter(idx=>this._state(idx).locked);for(const lockedIdx of previous){if(all[c].indexOf(lockedIdx)!==this._ordered(c,true).indexOf(lockedIdx))return;}}for(let c=0;c<this._columnCount();c++)all[c].forEach((index,order)=>{const m=this._meta(index);this._layout[m.id]={...this._state(index),col:c,order};});if(this._record(snapshot)){this._render();this._save();}}
     _hideOnCurrentDevice(i){const st=this._state(i);if(st.locked&&st.lock_device===this._device)return;const all=['desktop','tablet','mobile'];const hiddenDevices=st.hidden?all.filter(d=>d!==this._device):[...st.hidden_devices];if(!hiddenDevices.includes(this._device))hiddenDevices.push(this._device);this._update(i,{hidden:false,hidden_devices:hiddenDevices});}
     _update(i,update,visibilityDevice=this._device){if(this._profileBusy||this._state(i).locked&&('width' in update||'col' in update||'order' in update))return;if(this._state(i).locked&&this._state(i).lock_device===visibilityDevice&&('hidden' in update||'hidden_devices' in update))return;const snapshot=this._snapshot();const m=this._meta(i);const next={...this._state(i),...update};if(update.locked===true){const current=this._device;const all=['desktop','tablet','mobile'];next.hidden_devices=next.hidden?all.filter(d=>d!==current):[...next.hidden_devices];next.hidden=false;next.hidden_devices=next.hidden_devices.filter(d=>d!==current);}if(next.locked&&next.lock_device){next.hidden_devices=next.hidden_devices.filter(d=>d!==next.lock_device);}
       this._layout[m.id]=next;if(this._record(snapshot)){this._render();this._save();}}
@@ -472,7 +494,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         const cards={};for(let i=0;i<this._configs.length;i++){
           const m=this._meta(i);if(!m.fixed)cards[m.id]={col:m.defaultColumn,order:m.defaultOrder,width:this._defaultWidth(i),hidden:true,hidden_devices:[],locked:false,lock_device:null};
         }
-        this._profiles.push({id,name,cards,selected:[]});this._activeProfile=id;this._layout=structuredClone(cards);
+        this._profiles.push({id,name,columns:DEFAULT_COLUMNS,cards,selected:[]});this._activeProfile=id;this._layout=structuredClone(cards);
       }else if(action==='rename'){
         const name=params.name?.trim();if(!name||name.length>50)return;active.name=name;
       }else if(action==='delete'){
@@ -491,7 +513,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
     _exportLayout(){
       if(this._busy||this._profileBusy){this._error='Finish saving the layout before exporting.';this._render();return;}
       const name=this._profiles.find(p=>p.id===this._activeProfile)?.name||'Overview';
-      const data={format:'energy-manager-layout-profile',version:1,name,cards:this._payload()};
+      const data={format:'energy-manager-layout-profile',version:1,name,columns:this._columnCount(),cards:this._payload()};
       const blob=new Blob([JSON.stringify(data,null,2)+'\n'],{type:'application/json'});
       const url=URL.createObjectURL(blob);
       const link=el('a');
@@ -507,6 +529,8 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         const data=JSON.parse(await file.text());
         if(!data||Array.isArray(data)||typeof data!=='object'||data.format!=='energy-manager-layout-profile'||data.version!==1||!data.cards||Array.isArray(data.cards)||typeof data.cards!=='object')
           throw new Error('Not a supported Energy Manager layout export (format version 1).');
+        const columns=data.columns===undefined?DEFAULT_COLUMNS:data.columns;
+        if(!validColumns(columns))throw new Error('Invalid column count (must be 1–8).');
         if(Object.keys(data.cards).length>500)throw new Error('Too many cards in layout file.');
         const known=new Map(this._configs.map((_,i)=>[this._meta(i).id,this._meta(i)]));
         const cards={};let ignored=0;
@@ -514,7 +538,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
           const meta=known.get(id);
           if(!meta||meta.fixed){ignored++;continue;}
           if(!value||Array.isArray(value)||typeof value!=='object'||(value.locked!==undefined&&typeof value.locked!=='boolean')||
-             !Number.isInteger(value.col)||value.col<0||value.col>2||
+             !Number.isInteger(value.col)||value.col<0||value.col>=columns||
              !Number.isInteger(value.order)||value.order<0||value.order>1000||
              !Number.isInteger(value.width)||value.width<1||value.width>12||
              typeof value.hidden!=='boolean'||(value.hidden_devices!==undefined&&(!Array.isArray(value.hidden_devices)||value.hidden_devices.some(v=>!['desktop','tablet','mobile'].includes(v)))))
@@ -527,11 +551,10 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
         if(input===null)return;
         const name=input.trim();
         if(!name||name.length>50)throw new Error('Profile name must be 1–50 characters.');
-        // Only matched IDs are included. Any cards added later use their YAML defaults.
         if(this._profiles.length>=8)throw new Error('Maximum of eight tabs reached.');
         const id='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
         const previous=structuredClone(this._profiles),oldId=this._activeProfile;
-        this._profiles.push({id,name,cards,selected:Object.keys(cards)});
+        this._profiles.push({id,name,columns,cards,selected:Object.keys(cards)});
         this._activeProfile=id;this._layout=structuredClone(cards);this._render();
         try{await this._save();}
         catch(error){
@@ -551,7 +574,7 @@ energy-manager-layout .em-hint{font-size:12px;opacity:.75;margin-top:9px}
       }
       return result;
     }
-    async _save(){this._dirty=true;if(this._busy)return;this._busy=true;let failure=null;while(this._dirty){this._dirty=false;try{const current=this._profiles.find(t=>t.id===this._activeProfile);if(current)current.cards=this._payload();const result=await this._hass.callWS({type:'em_dashboard_tabs/save',tabs:this._profiles,revision:this._rev});this._rev=result.revision;this._error='';}catch(e){failure=e;this._error='Save failed: '+(e.message||e);break;}}this._busy=false;const status=this.querySelector('.em-status');if(status)status.textContent=this._error||'';else if(this._error)this._render();if(failure)throw failure;}
+    async _save(){this._dirty=true;if(this._busy)return;this._busy=true;let failure=null;while(this._dirty){this._dirty=false;try{const current=this._profiles.find(t=>t.id===this._activeProfile);if(current){current.columns=this._columnCount();current.cards={...this._layout,...this._payload()};}const result=await this._hass.callWS({type:'em_dashboard_tabs/save',tabs:this._profiles,revision:this._rev});this._rev=result.revision;this._error='';}catch(e){failure=e;this._error='Save failed: '+(e.message||e);break;}}this._busy=false;const status=this.querySelector('.em-status');if(status)status.textContent=this._error||'';else if(this._error)this._render();if(failure)throw failure;}
   }
   customElements.define(TAG,Layout);
 })();
