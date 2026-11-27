@@ -59,24 +59,30 @@ APPROVAL = {
     vol.Required("policy"): vol.In(("must", "defer", "search")),
     vol.Optional("start"): vol.Any(int, None),
     vol.Optional("deadline"): int,
+    vol.Optional("earliest"): int,
+    vol.Optional("not_before"): str,
     vol.Optional("search"): {
         vol.Required("finish_by"): str,
+        vol.Optional("not_before"): str,
         vol.Required("days"): vol.In((3, 7, None)),
     },
     vol.Optional("repeat"): {
         vol.Required("days"): vol.All([vol.In(range(7))], vol.Length(min=1, max=7)),
         vol.Required("finish_by"): str,
+        vol.Optional("not_before"): str,
         vol.Optional("start_at"): str,
     },
     vol.Required("start_automation"): str,
     vol.Required("stop_automation"): str,
 }
 
+
 FAVOURITE_SETTINGS = {
     vol.Required("name"): vol.All(str, vol.Length(min=1, max=80)),
     vol.Required("power"): vol.All(vol.Any(float, int), vol.Range(min=0.1, max=1000)),
     vol.Required("minutes"): vol.All(int, vol.Range(min=1, max=1440)),
     vol.Required("deadline"): str,
+    vol.Optional("not_before"): str,
     vol.Required("source"): vol.In(SOURCES),
     vol.Required("enabled"): bool,
     vol.Required("timing"): vol.In(("fixed", "flexible")),
@@ -105,8 +111,22 @@ def local_timestamp(day, value, zone):
     return stamp if datetime.fromtimestamp(stamp, zone).replace(tzinfo=None) == naive else None
 
 
+def window_minutes(not_before, finish_by):
+    start = read_clock(not_before) if not_before else 0
+    finish = read_clock(finish_by) if finish_by else None
+    if start is None or finish is None:
+        return None
+    return finish - start + (1440 if finish < start else 0)
+
+
+def daily_window(day, rule, zone):
+    before = rule.get("not_before") or "00:00"
+    finish = rule["finish_by"]
+    end_day = day + timedelta(days=1) if read_clock(finish) < read_clock(before) else day
+    return local_timestamp(day, before, zone), local_timestamp(end_day, finish, zone)
+
+
 async def async_setup(hass, config):
-    """Restore the queue, expose approval and start the scheduler with Core."""
     scheduler = Scheduler(hass, config[DOMAIN])
     await scheduler.restore()
     hass.data[DOMAIN] = scheduler
@@ -322,6 +342,7 @@ class Scheduler:
             "supports_future_day_search": True,
             "supports_favourites": True,
             "supports_must_run_fallback": True,
+            "supports_not_before": True,
             "max_favourites": MAX_FAVOURITES,
             "favourites": deepcopy(sorted(self.favourites.values(),
                                          key=lambda entry: (entry["name"].casefold(), entry["id"]))),
@@ -369,6 +390,13 @@ class Scheduler:
         finish = read_clock(settings["deadline"]) if settings["deadline"] else None
         if settings["deadline"] and finish is None:
             raise vol.Invalid("Choose a valid finish-by time.")
+        before = settings.get("not_before", "")
+        if before and read_clock(before) is None:
+            raise vol.Invalid("Choose a valid not-before time.")
+        if before and settings["deadline"] and window_minutes(before, settings["deadline"]) < settings["minutes"]:
+            raise vol.Invalid("The permitted operating window is shorter than the workload duration.")
+        if before and not settings["deadline"] and 1440 - read_clock(before) < settings["minutes"]:
+            raise vol.Invalid("The workload cannot finish before midnight; choose a finish-by time.")
         days = settings["weekdays"]
         if len(set(days)) != len(days) or any(type(day) is not int or not 0 <= day <= 6 for day in days):
             raise vol.Invalid("Choose distinct weekdays.")
@@ -378,11 +406,11 @@ class Scheduler:
         if searching and (settings["timing"] != "flexible" or repeated or not enabled):
             raise vol.Invalid("Future-day search requires a flexible, one-off scheduled load.")
         if enabled and (repeated or searching):
-            if finish is None or finish < settings["minutes"]:
+            if finish is None or window_minutes(before, settings["deadline"]) < settings["minutes"]:
                 raise vol.Invalid("Choose a daily finish time that leaves enough time to run.")
             if repeated and not days:
                 raise vol.Invalid("Select at least one weekday.")
-        if enabled and settings["timing"] == "flexible" and settings["policy"] == "must" and finish is None:
+        if enabled and settings["timing"] == "flexible" and settings["policy"] == "must" and finish is None and not before:
             raise vol.Invalid("Choose a finish time for Must run.")
         for field in ("start_automation", "stop_automation"):
             entity = settings[field]
@@ -506,10 +534,10 @@ class Scheduler:
         if item["policy"] == "search":
             if search is None or item["timing"] != "flexible" or "repeat" in item:
                 raise vol.Invalid("Future-day search requires a flexible, one-off load.")
-            finish = read_clock(search["finish_by"])
-            if finish is None or finish * 60 < item["duration"]:
+            length = window_minutes(search.get("not_before"), search["finish_by"])
+            if length is None or length * 60 < item["duration"]:
                 raise vol.Invalid("Choose a daily finish time that leaves enough time to run.")
-            if item.get("start") is not None or "deadline" in item:
+            if item.get("start") is not None or "deadline" in item or "earliest" in item or "not_before" in item:
                 raise vol.Invalid("A future-day search uses a daily finish time.")
         elif search is not None:
             raise vol.Invalid("Choose Keep looking on future days to set a search period.")
@@ -523,24 +551,34 @@ class Scheduler:
 
     def validate_deadline(self, item, now):
         deadline = item.get("deadline")
+        earliest = item.get("earliest")
+        before = item.get("not_before")
+        if before is not None or earliest is not None:
+            if (not before or read_clock(before) is None or type(earliest) is not int
+                    or deadline is None or not now - 90000 <= earliest <= now + 172800
+                    or earliest % 60 or deadline - earliest > 90000
+                    or datetime.fromtimestamp(earliest, self.schedule_zone()).strftime("%H:%M") != before
+                    or deadline - max(now, earliest) < item["duration"]):
+                raise vol.Invalid("The permitted operating window is invalid or too short for this workload.")
         if deadline is None or not now < deadline <= now + 172800 or deadline - item["duration"] <= now:
             raise vol.Invalid(f"{item['name']} needs a future finish time with enough time to run.")
 
     def search_window(self, job, now):
         zone = self.schedule_zone()
         today = datetime.fromtimestamp(now, zone).date()
-        day = today
+        rule = job["search"]
+        overnight = bool(rule.get("not_before")) and read_clock(rule["finish_by"]) < read_clock(rule["not_before"])
+        day = today - timedelta(days=1) if overnight else today
         last_day = None
         if job.get("search_from"):
             first_day = date.fromisoformat(job["search_from"])
-            day = max(today, first_day)
+            day = max(day, first_day)
             days = job["search"]["days"]
             if days is not None:
                 last_day = first_day + timedelta(days=days - 1)
         while last_day is None or day <= last_day:
-            earliest = datetime.combine(day, clock_time.min, zone).timestamp()
-            deadline = local_timestamp(day, job["search"]["finish_by"], zone)
-            if deadline is not None and deadline - job["duration"] >= max(now, earliest):
+            earliest, deadline = daily_window(day, rule, zone)
+            if earliest is not None and deadline is not None and deadline - job["duration"] >= max(now, earliest):
                 return day.isoformat(), int(earliest), int(deadline)
             day += timedelta(days=1)
         return None
@@ -564,7 +602,7 @@ class Scheduler:
         start, deadline, duration = item.get("start"), item["deadline"], item["duration"]
         if start is None and item["timing"] != "flexible":
             raise vol.Invalid(f"{name} needs a suggested start time.")
-        if start is not None and (start <= now or start + duration > deadline):
+        if start is not None and (start <= now or start < item.get("earliest", start) or start + duration > deadline):
             raise vol.Invalid(f"The suggested start for {name} has expired. Review the refreshed times.")
         if start is None and item["policy"] == "must":
             start = deadline - duration
@@ -594,7 +632,10 @@ class Scheduler:
         run_date = datetime.fromtimestamp(original["deadline"], zone).date()
         if datetime.fromtimestamp(item["deadline"], zone).date() != run_date:
             raise vol.Invalid("The edited finish time must be on the original finish date.")
-        if original.get("repeat_id") and datetime.fromtimestamp(now, zone).date().isoformat() != original["run_date"]:
+        if original.get("repeat_id") and item.get("not_before") and datetime.fromtimestamp(
+                item["earliest"], zone).date().isoformat() != original["run_date"]:
+            raise vol.Invalid("The edited opening time must be on the original occurrence day.")
+        if original.get("repeat_id") and now >= original["deadline"]:
             raise vol.Invalid("The edited occurrence must fit on its original day.")
         return original
 
@@ -649,7 +690,7 @@ class Scheduler:
                 ) if intervals else None
                 outcome = "forecast" if fixed_start is None else "fixed" if impact is not None else "fixed_at_risk"
 
-        return dict(start=start, end=end, deadline=job["deadline"], power=job["power"],
+        return dict(start=start, end=end, deadline=job["deadline"], not_before=job.get("not_before") or (job.get("search") or {}).get("not_before"), power=job["power"],
                     duration=job["duration"], source=job["source"], timing=job["timing"],
                     policy=job["policy"], search=job.get("search"), outcome=outcome, impact=impact,
                     warning=warning)
@@ -658,7 +699,7 @@ class Scheduler:
         intervals, reserved, args = self.edit_forecast(item, now)
         changed = any(item.get(key) != original.get(key) for key in (
             "name", "power", "duration", "source", "timing", "policy", "search",
-            "start_automation", "stop_automation",
+            "start_automation", "stop_automation", "not_before",
         )) or (item["policy"] != "search" and item["deadline"] != original["deadline"])
         current = await self.estimate_edit_schedule(original, intervals, reserved, args, saved=True)
         draft = self.prepare_search(item, now, original) if changed and item["policy"] == "search" else item
@@ -744,7 +785,7 @@ class Scheduler:
         if (job["status"] != "skipped" or job["note"] != MANUAL_SKIP
                 or job.get("repeat_id") not in repeats):
             return None
-        if job["run_date"] != datetime.fromtimestamp(now, self.schedule_zone()).date().isoformat():
+        if now >= job["deadline"]:
             return None
         locked = job["approval"]["start"] if job["timing"] == "fixed" else None
         latest = locked if locked is not None else job["deadline"] - job["duration"]
@@ -792,8 +833,8 @@ class Scheduler:
         days = repeat["days"]
         if not days or len(set(days)) != len(days) or any(type(day) is not int or not 0 <= day <= 6 for day in days):
             raise vol.Invalid(f"Choose distinct weekdays for {name}.")
-        finish = read_clock(repeat["finish_by"])
-        if finish is None or finish * 60 < item["duration"]:
+        length = window_minutes(repeat.get("not_before"), repeat["finish_by"])
+        if length is None or length * 60 < item["duration"]:
             raise vol.Invalid(f"{name} needs enough time to finish on each selected day.")
         repeats[item["id"]] = dict(
             id=item["id"], approval=deepcopy(item), created=now,
@@ -815,11 +856,12 @@ class Scheduler:
                     or (entry["last_date"] and entry["last_date"] >= day_key)):
                 continue
 
-            deadline = local_timestamp(day, rule["finish_by"], zone)
+            earliest, deadline = daily_window(day, rule, zone)
             duration = item["duration"]
             latest = deadline - duration if deadline is not None else None
-            valid = latest is not None and midnight <= latest
+            valid = latest is not None and earliest is not None and earliest <= latest
             entry["last_date"] = day_key
+            # Approving after today's latest start takes effect on the next selected day.
             if valid and day_key == entry["approved_on"] and latest < entry["created"]:
                 continue
 
@@ -835,6 +877,7 @@ class Scheduler:
                 name=item["name"], power=item["power"], duration=duration, source=item["source"],
                 timing=item["timing"], policy=item["policy"], start=None, deadline=deadline or midnight,
                 start_automation=item["start_automation"], stop_automation=item["stop_automation"],
+                **({"earliest": int(earliest), "not_before": rule["not_before"]} if valid and rule.get("not_before") else {}),
                 approval={"start": None}, created=now, actual_start=None, stop_at=None,
                 status=status, note=note, start_failed=False,
             )
@@ -920,7 +963,7 @@ class Scheduler:
             job.get("run_date") and job["status"] in PENDING for job in jobs.values()
         ) else None
         for job in jobs.values():
-            if job["status"] in PENDING and job.get("run_date") and job["run_date"] < local_date:
+            if job["status"] in PENDING and job.get("run_date") and job["run_date"] < local_date and now >= job["deadline"]:
                 job.update(status="failed" if must_run(job) else "skipped", note="The selected day has ended.")
         pending = [job for job in jobs.values() if job["status"] in PENDING]
         if pending:
@@ -955,6 +998,7 @@ class Scheduler:
         unplanned = [job for job in pending if job["timing"] == "flexible" or job["approval"]["start"] is None]
         active = [self.reservation(job) for job in jobs.values()
                   if job["status"] in {"starting", "running", "stopping", "stop_failed"}]
+
         earliest = ceil(now / 60) * 60
         due_times = [job["start"] for job in pending if job["start"] is not None
                      and 0 <= now - job["start"] <= 10]
@@ -972,9 +1016,12 @@ class Scheduler:
             job.update(status="failed", note=note, source_warning=warning)
 
         for job in sorted(fixed, key=lambda job: job["start"]):
-            # Fixed keeps its approved start. Update its warning, but don't move it.
             others = active + [self.reservation(other) for other in fixed
                                if other["id"] != job["id"] and other["status"] in PENDING]
+            if job["start"] < job.get("earliest", job["start"]):
+                job.update(status="failed" if must_run(job) else "skipped",
+                           note="The fixed start is outside the permitted operating window.")
+                continue
             if job["start"] > now:
                 if must_run(job):
                     assessment = await assess(job, job["start"], others)
@@ -1009,6 +1056,7 @@ class Scheduler:
 
         reserved = active + [self.reservation(job) for job in fixed if job["status"] in PENDING]
         urgent = sorted((job for job in unplanned if must_run(job)
+                         and job.get("earliest", now) <= now
                          and job["deadline"] - job["duration"] <= now),
                         key=lambda job: (job["deadline"], job["id"]))
         for job in urgent:
@@ -1026,7 +1074,8 @@ class Scheduler:
             reserved.append(self.reservation(job))
 
         due = sorted((job for job in unplanned if job["status"] in PENDING and must_run(job)
-                      and job["start"] is not None and 0 <= now - job["start"] <= START_GRACE
+                      and job["start"] is not None and job.get("earliest", now) <= now
+                      and 0 <= now - job["start"] <= START_GRACE
                       and (not intervals or intervals[0]["begin"] > job["start"])),
                      key=lambda job: (job["start"], job["id"]))
         for job in due:
@@ -1044,7 +1093,7 @@ class Scheduler:
             latest = job["deadline"] - job["duration"]
             plan = plans.get(job["id"], {})
             start = plan.get("start")
-            if start is not None and start <= now:
+            if start is not None and job.get("earliest", start) <= start <= now:
                 window = dict(job, start=now, end=now + job["duration"])
                 if not overlaps(window, reserved):
                     if must_run(job):
@@ -1080,15 +1129,13 @@ class Scheduler:
                     job["source_warning"] = plan.get("warning", "")
                 remaining.append(start)
             elif must_run(job):
-                # If the forecast is temporarily unavailable, retain an explicitly
-                # unverified deadline fallback. Never bypass a known hard limit.
                 fallback = None
                 if not intervals:
                     candidates = {latest}
                     for other in reserved:
                         candidates.update((other["start"] - job["duration"], other["end"]))
                     for candidate in sorted(candidates, reverse=True):
-                        if now < candidate <= latest and not overlaps(
+                        if max(now, job.get("earliest", now)) <= candidate <= latest and candidate > now and not overlaps(
                                 dict(job, start=candidate, end=candidate + job["duration"]), reserved):
                             fallback = candidate
                             break
@@ -1105,6 +1152,8 @@ class Scheduler:
 
     @staticmethod
     def mark_start(job, now, dispatch, note):
+        if now < job.get("earliest", now):
+            raise HomeAssistantError("Cannot start before the permitted operating window.")
         job.update(status="starting", actual_start=now, stop_at=now + job["duration"], note=note)
         dispatch.append(job["id"])
 
