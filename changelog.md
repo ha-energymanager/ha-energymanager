@@ -22,7 +22,6 @@
   * BOM Rain Radar
   * Power Boost
 * Marketplace Config-template-card, used for Energy Consumption Card on dashboard
-* BatteryLedger added from Roving-Ronin/BatteryLedger
 * Support for custom Marketplace repositories
 * Two new entities to track system purchase cost
 * Extra entity to track second purchase date
