@@ -11,6 +11,8 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 
 MAX_TABS = 8
+DEFAULT_COLUMNS = 3
+MAX_COLUMNS = 8
 MAX_BYTES = 300_000
 
 
@@ -24,8 +26,8 @@ def default_tabs(root: Path | None = None) -> list[dict]:
                 raise ValueError("Invalid bundled v1 layout")
             inverter_cards = payload["cards"]
     return [
-        {"id": "primary", "name": "Overview", "cards": {}},
-        {"id": "inverter", "name": "Inverter", "cards": inverter_cards, "selected": None},
+        {"id": "primary", "name": "Overview", "columns": DEFAULT_COLUMNS, "cards": {}},
+        {"id": "inverter", "name": "Inverter", "columns": DEFAULT_COLUMNS, "cards": inverter_cards, "selected": None},
     ]
 
 
@@ -74,6 +76,14 @@ def validate_tabs(tabs: object, *, migration: bool = False) -> list[dict]:
             raise ValueError("Invalid card collection")
         if any(not isinstance(k, str) or len(k) > 120 or not isinstance(v, dict) for k, v in cards.items()):
             raise ValueError("Invalid card layout")
+        columns = tab.get("columns", DEFAULT_COLUMNS)
+        if type(columns) is not int or not 1 <= columns <= MAX_COLUMNS:
+            raise ValueError("Invalid column count (must be 1–8)")
+        for card in cards.values():
+            if "col" in card:
+                col = card["col"]
+                if type(col) is not int or not 0 <= col < columns:
+                    raise ValueError("Card column is outside the configured tab")
         selected = tab.get("selected")
         if selected is not None:
             if (not isinstance(selected, list) or len(selected) > 500 or
@@ -82,7 +92,7 @@ def validate_tabs(tabs: object, *, migration: bool = False) -> list[dict]:
                 raise ValueError("Invalid selected-card list")
             selected = list(dict.fromkeys(selected))
         ids.add(tid)
-        result.append({"id": tid, "name": name.strip(), "cards": cards,
+        result.append({"id": tid, "name": name.strip(), "columns": columns, "cards": cards,
                        "selected": selected})
     if "primary" not in ids:
         raise ValueError("Primary tab must be retained")
