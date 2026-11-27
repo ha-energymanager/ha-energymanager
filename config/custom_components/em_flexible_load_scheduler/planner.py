@@ -203,7 +203,7 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None
             flexible = row["flexible"] * hours if capacity else 0
             diverted_total = 0
             allocations = []
-            
+
             for job in active:
                 if job["start"] >= stop or job["end"] <= start:
                     continue
@@ -240,8 +240,6 @@ def replay(intervals, jobs, capacity, charge_eff, discharge_eff, report_job=None
                 if stored > EPS:
                     used = stored / discharge_eff
                     deficit += used
-                    # Charge targets are forecast objectives, not a physical limit.
-                    # Must run may miss a target; ordinary strict loads still cannot.
                     if must_run(job):
                         protected += used
                 mix = mixes.get(job["id"])
@@ -330,6 +328,8 @@ def overlaps(candidate, placements):
 
 def assess_must_window(intervals, job, reserved, capacity, charge_eff, discharge_eff):
     window = dict(job, end=job["start"] + job["duration"])
+    if window["start"] < job.get("earliest", window["start"]):
+        return {"blocked": True, "warning": "Cannot start before the permitted operating window."}
     if overlaps(window, reserved):
         return {"blocked": True, "warning": "Must run — another run using the same automation overlaps this time."}
     result = replay(intervals, [*reserved, window], capacity, charge_eff, discharge_eff, report_job=job["id"])
@@ -360,7 +360,6 @@ def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff, de
             return right_must - left_must
         if len(left_places) != len(right_places):
             return len(right_places) - len(left_places)
-
         for x, y in zip(left[4:], right[4:], strict=True):
             if abs(x - y) > EPS:
                 return -1 if x < y else 1
@@ -383,7 +382,6 @@ def recommend(intervals, jobs, reserved, capacity, charge_eff, discharge_eff, de
             result = None if overlaps(candidate, reserved) else evaluate([*reserved, candidate])
             if result is not None:
                 known[start] = result
-
         if must_run(job) and not known:
             earliest = max(intervals[0]["begin"], job.get("earliest", intervals[0]["begin"]))
             latest = min(job["deadline"], intervals[-1]["end"]) - job["duration"]
