@@ -189,7 +189,6 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
       }
 
       const allocations = [];
-
       for (const job of intervalJobs) {
         if (job.start >= to || job.end <= from) continue;
         const demand = job.power * hours;
@@ -229,6 +228,7 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
         if (stored > energyTolerance) {
           const used = stored / battery.dischargeEfficiency;
           deficit += used;
+          // Must run may affect the planned charge target, but never the reserve.
           if (mustRun(job)) protectedDeficit += used;
         }
         job.solar += direct;
@@ -288,7 +288,7 @@ function evaluateSchedule(intervals, placements, battery, after = null) {
 }
 
 function possibleStarts(intervals, job, latest, placements = []) {
-  const earliest = intervals[0].from;
+  const earliest = Math.max(intervals[0].from, job.earliest ?? -Infinity);
   const starts = new Set();
   if (!placements.length) {
     starts.add(earliest);
@@ -359,7 +359,7 @@ function recommend(intervals, loads, battery, reserved) {
       .map(window => ({ window, result: evaluate([window]) }))
       .filter(candidate => candidate.result);
     if (mustRun(job) && !candidates.length) {
-      for (let start = Math.ceil(intervals[0].from / minute) * minute; start <= latest; start += minute) {
+      for (let start = Math.ceil(Math.max(intervals[0].from, job.earliest ?? -Infinity) / minute) * minute; start <= latest; start += minute) {
         const window = { ...job, start, end: start + job.duration };
         const result = evaluate([window]);
         if (result) candidates.push({ window, result });
@@ -401,7 +401,7 @@ function recommend(intervals, loads, battery, reserved) {
   for (const job of [...loads].sort((a, b) => (a.deadline ?? horizon) - (b.deadline ?? horizon) || a.id - b.id)) {
     if (!mustRun(job) || placedIds.has(job.id) || job.deadline === null || job.deadline <= horizon) continue;
     const latest = job.deadline - job.duration;
-    const earliest = intervals[0].from;
+    const earliest = Math.max(intervals[0].from, job.earliest ?? -Infinity);
     const windows = [...reserved, ...placed];
     const starts = new Set([latest, horizon, earliest]);
     for (const row of intervals) {
@@ -463,7 +463,7 @@ function localDateTime(timestamp, timeZone) {
   return value.year + "-" + value.month + "-" + value.day + "T" + value.hour + ":" + value.minute;
 }
 
-function parseDeadline(value, timeZone, now, date = null) {
+function parseDeadline(value, timeZone, now, date = null, allowPast = false) {
   const minutes = clockMinutes(value);
   if (minutes === null) return null;
   const formatter = new Intl.DateTimeFormat("en-GB", {
@@ -478,8 +478,37 @@ function parseDeadline(value, timeZone, now, date = null) {
     const target = day + minutes * minute;
     const candidates = [-36, 0, 36].map(delta => target + delta * hour)
       .map(probe => target - (wallTime(probe, formatter) - probe))
-      .filter(candidate => candidate >= earliest && wallTime(candidate, formatter) === target);
+      .filter(candidate => (allowPast || candidate >= earliest) && wallTime(candidate, formatter) === target);
     if (candidates.length) return Math.min(...candidates);
+  }
+  return null;
+}
+
+function shiftDate(date, days) {
+  return new Date(Date.parse(date + "T00:00:00Z") + days * 24 * hour).toISOString().slice(0, 10);
+}
+
+function windowMinutes(before, finish) {
+  const start = before ? clockMinutes(before) : 0;
+  const end = clockMinutes(finish);
+  if (start === null || end === null) return null;
+  return end - start + (end < start ? 1440 : 0);
+}
+
+function operatingWindow(before, finish, timeZone, now, duration, finishDate = null) {
+  const startMinutes = clockMinutes(before);
+  const endMinutes = finish ? clockMinutes(finish) : 0;
+  if (startMinutes === null || endMinutes === null) return null;
+  const overnight = !finish || endMinutes < startMinutes;
+  const today = localDateTime(now, timeZone).slice(0, 10);
+  const dates = finishDate ? [shiftDate(finishDate, overnight ? -1 : 0)] :
+    [shiftDate(today, -1), today, shiftDate(today, 1)];
+  for (const day of dates) {
+    const earliest = parseDeadline(before, timeZone, now, day, true);
+    const deadline = parseDeadline(finish || "00:00", timeZone, now, shiftDate(day, overnight ? 1 : 0), true);
+    if (earliest !== null && deadline !== null && deadline - Math.max(now, earliest) >= duration && deadline - now <= 48 * hour) {
+      return { earliest, deadline };
+    }
   }
   return null;
 }
@@ -537,7 +566,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         .editor {
           display: grid;
           grid-template-columns: minmax(0,1fr) minmax(60px,.5fr) minmax(60px,.6fr)
-            minmax(95px,.75fr) minmax(110px,.9fr) 32px;
+            minmax(95px,.75fr) minmax(95px,.75fr) minmax(110px,.9fr) 32px;
           align-items: end;
           gap: 8px;
           padding: 10px;
@@ -666,16 +695,17 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
         @container (max-width: 610px) {
           .editor {
             grid-template-columns: minmax(0,1fr) minmax(0,1fr) 32px;
-            grid-template-areas: "name name remove" "power duration duration" "deadline source source";
+            grid-template-areas: "name name remove" "power duration duration" "not-before deadline deadline" "source source source";
           }
           .load-name { grid-area: name; }
           .load-power { grid-area: power; }
           .load-duration { grid-area: duration; }
           .load-deadline { grid-area: deadline; }
+          .load-not-before { grid-area: not-before; }
           .power-source { grid-area: source; }
           .remove { grid-area: remove; }
-          .schedule-toggle { grid-row: 4; }
-          .automation-options { grid-row: 5; }
+          .schedule-toggle { grid-row: 5; }
+          .automation-options { grid-row: 6; }
           .recommendation { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
           .recommendation .detail { grid-column: 1 / -1; }
         }
@@ -686,10 +716,10 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           .run-actions { justify-content: flex-start; }
           .editor {
             grid-template-areas: "name name remove" "power duration duration"
-              "deadline deadline deadline" "source source source";
+              "not-before not-before not-before" "deadline deadline deadline" "source source source";
           }
-          .schedule-toggle { grid-row: 5; }
-          .automation-options { grid-row: 6; grid-template-columns: 1fr; }
+          .schedule-toggle { grid-row: 6; }
+          .automation-options { grid-row: 7; grid-template-columns: 1fr; }
         }
       </style>
       <ha-card>
@@ -709,6 +739,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
             <label class="load-name">Load<input data-field="name" type="text" maxlength="80" placeholder="Load name"></label>
             <label class="load-power">Power (kW)<input data-field="power" type="number" min="0.1" step="0.1" inputmode="decimal"></label>
             <label class="load-duration">Duration (min)<input data-field="minutes" type="number" min="1" step="1" inputmode="numeric"></label>
+            <label class="load-not-before" title="Earliest allowed start in the Home Assistant timezone. If Finish by is earlier, the window runs overnight.">Not before (optional)<input data-field="not_before" type="time" step="60"></label>
             <label class="load-deadline"><span class="deadline-label">Finish by (optional)</span><input data-field="deadline" type="time" step="60"></label>
             <label class="power-source">Power source<select data-field="source"></select></label>
             <button class="remove" type="button" aria-label="Remove load" title="Remove load">×</button>
@@ -825,6 +856,11 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
               Until cancelled. The first day with enough time before the deadline counts as day one.</li>
             <li><strong>Once-off</strong> runs once. <strong>Repeated</strong> runs on the selected weekdays.
               The scheduler chooses a start that fits before <strong>Finish by</strong> on each selected day.</li>
+            <li><strong>Not before (optional)</strong> restricts when a load can start, including Must run fallbacks.
+              If Finish by is earlier, the window runs overnight; selected weekdays refer to the day the window opens.
+              For a once-off load with only Not before set, the window ends at midnight after the opening time.
+              If today's window cannot fit the full duration, the next available daily window is used.
+              Repeated loads and future-day searches still require a finish time.</li>
           </ul>
           <p><strong>Example</strong> To run a pool pump for four hours on selected days, set the duration to 240 minutes and
             <strong>Finish by</strong> to 4 pm. Choose <strong>Repeated</strong>, <strong>Flexible</strong>,
@@ -962,6 +998,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       input("cadence").closest("label").hidden = true;
       row.querySelector(".automation-options").hidden = false;
       row.querySelector(".deadline-label").textContent = "Finish by";
+      input("not_before").value = job.search?.not_before ?? job.not_before ?? "";
       input("deadline").value = job.search?.finish_by ?? localDateTime(job.deadline * 1000, timeZone).slice(11);
       if (job.search) input("search_days").value = job.search.days ?? "unlimited";
       input("minutes").value = job.duration / 60;
@@ -973,8 +1010,8 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     }
     if (favourite) {
       const settings = favourite.settings;
-      for (const field of ["name", "power", "minutes", "deadline", "source", "timing", "policy", "cadence"]) {
-        input(field).value = settings[field];
+      for (const field of ["name", "power", "minutes", "not_before", "deadline", "source", "timing", "policy", "cadence"]) {
+        input(field).value = settings[field] ?? "";
       }
       input("enabled").checked = settings.enabled;
       input("search_days").value = settings.search_days ?? "unlimited";
@@ -1012,7 +1049,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const value = field => input(field).value;
     return {
       name: value("name").trim(), power: finite(value("power")), minutes: finite(value("minutes")),
-      deadline: value("deadline"), source: value("source"), enabled: input("enabled").checked,
+      deadline: value("deadline"), ...(this._backend?.supports_not_before || value("not_before") ? { not_before: value("not_before") } : {}), source: value("source"), enabled: input("enabled").checked,
       timing: value("timing"), policy: value("policy"), cadence: value("cadence"),
       search_days: value("search_days") === "unlimited" ? null : Number(value("search_days")),
       weekdays: Array.from(row.querySelectorAll(".weekday-options input:checked"), item => Number(item.value)),
@@ -1080,7 +1117,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const timeZone = this._hass.config?.time_zone || undefined;
     const finish = job.search?.finish_by ?? (job.deadline == null ? "" : localDateTime(job.deadline * 1000, timeZone).slice(11));
     const settings = {
-      name: job.name, power: job.power, minutes: job.duration / 60, deadline: finish,
+      name: job.name, power: job.power, minutes: job.duration / 60, deadline: finish, not_before: job.search?.not_before ?? job.not_before ?? "",
       source: job.source, enabled: true, timing: job.timing, policy: job.policy, cadence: "once",
       search_days: job.search ? job.search.days : 3, weekdays: [],
       start_automation: job.start_automation, stop_automation: job.stop_automation,
@@ -1111,6 +1148,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       update.disabled = busy;
     }
     const list = this._get("favourite-list");
+    // Avoid rebuilding the controls on forecast updates when their contents have not changed.
     const signature = JSON.stringify([entries, limit, admin, busy]);
     if (this._favouriteSignature === signature) return;
     this._favouriteSignature = signature;
@@ -1126,7 +1164,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       const detail = document.createElement("small");
       detail.textContent = [settings.power + " kW", settings.minutes + " min",
         sources.find(([value]) => value === settings.source)?.[1] ?? settings.source,
-        settings.deadline ? "Finish by " + settings.deadline : "", settings.cadence === "repeated" ? "Repeated" : ""].filter(Boolean).join(" · ");
+        settings.not_before ? "Not before " + settings.not_before : "", settings.deadline ? "Finish by " + settings.deadline : "", settings.cadence === "repeated" ? "Repeated" : ""].filter(Boolean).join(" · ");
       summary.append(title, detail);
       const actions = document.createElement("div");
       actions.className = "favourite-actions";
@@ -1238,33 +1276,42 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       const power = finite(value("power"));
       const minutes = finite(value("minutes"));
       const deadlineValue = value("deadline");
+      const before = value("not_before");
       const enabled = row.querySelector('[data-field="enabled"]').checked;
       const timing = value("timing");
       const policy = value("policy");
       const days = value("search_days");
       const search = enabled && policy === "search" ? {
-        finish_by: deadlineValue, days: days === "unlimited" ? null : Number(days),
+        finish_by: deadlineValue, ...(before ? { not_before: before } : {}), days: days === "unlimited" ? null : Number(days),
       } : null;
       const repeated = enabled && value("cadence") === "repeated";
       const repeat = repeated ? {
         days: Array.from(row.querySelectorAll(".weekday-options input:checked"), input => Number(input.value)),
-        finish_by: deadlineValue,
+        finish_by: deadlineValue, ...(before ? { not_before: before } : {}),
       } : null;
       const edit = this._editing?.job;
       const finishDate = edit ? localDateTime(edit.deadline * 1000, timeZone).slice(0, 10) : null;
-      const deadline = !repeated && !search && deadlineValue ? parseDeadline(deadlineValue, timeZone, now, finishDate) : null;
+      const window = before && !repeated && !search ? operatingWindow(before, deadlineValue, timeZone, now, minutes * minute, finishDate) : null;
+      const deadline = before && !repeated && !search ? window?.deadline ?? null :
+        !repeated && !search && deadlineValue ? parseDeadline(deadlineValue, timeZone, now, finishDate) : null;
       let problem = "";
       if (!(power >= 0.1) || !Number.isSafeInteger(minutes) || minutes < 1) {
         problem = "Enter a power and a whole-minute duration.";
+      } else if (before && clockMinutes(before) === null) {
+        problem = "Choose a valid not-before time.";
+      } else if (before && deadlineValue && windowMinutes(before, deadlineValue) < minutes) {
+        problem = "The permitted operating window is shorter than the workload duration.";
+      } else if (before && !repeated && !search && !window) {
+        problem = "No permitted operating window can fit this workload. Adjust the duration or times.";
       } else if (search) {
-        const finish = clockMinutes(search.finish_by);
+        const finish = windowMinutes(before, search.finish_by);
         if (finish === null || finish < minutes) problem = "Choose a daily finish time that leaves enough time to run.";
       } else if (edit) {
         if (deadline === null || deadline - minutes * minute <= now || deadline - now > 48 * hour) {
           problem = "Choose a finish time that leaves enough time to run on the original day.";
         }
       } else if (repeat) {
-        const finish = clockMinutes(repeat.finish_by);
+        const finish = windowMinutes(before, repeat.finish_by);
         if (!repeat.days.length) problem = "Select at least one weekday.";
         else if (finish === null) problem = "Choose a finish-by time.";
         else if (finish < minutes) problem = "The run must fit within the selected day.";
@@ -1275,7 +1322,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       }
       return {
         id: Number(row.dataset.id), name: value("name").trim() || "Load " + (index + 1),
-        power, duration: minutes * minute, deadline,
+        power, duration: minutes * minute, deadline, not_before: before, earliest: window?.earliest ?? null,
         source: value("source"),
         enabled, timing, repeat, policy, search,
         start_automation: value("start_automation"),
@@ -1452,6 +1499,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
     const rows = this._get("edit-impact-rows");
     rows.replaceChildren();
     for (const [label, format] of [
+      ["Not before", booking => booking.not_before || "—"],
       ["Finish by", booking => booking.search ? booking.search.finish_by + " each day" : time.format(booking.deadline * 1000)],
       ["Power source preference", booking => source.get(booking.source)],
       ["Timing", booking => booking.timing === "fixed" ? "Fixed" : "Flexible"],
@@ -1511,6 +1559,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       issues.push(this._subscription?.failed ? "Install or restart the Home Assistant load scheduler." :
         "Connecting to the Home Assistant load scheduler.");
     } else {
+      if (enabled.some(row => row.not_before) && !backend.supports_not_before) issues.push("Update and restart the Home Assistant scheduler to use Not before.");
       if (!backend.automation_exclusions) issues.push("Update the Home Assistant load scheduler.");
       if (enabled.some(mustRun) && !backend.supports_must_run_fallback) {
         issues.push("Update and restart the Home Assistant scheduler to use the new Must run behaviour.");
@@ -1579,7 +1628,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           data: {
             name: row.name, power: row.power, duration: row.duration / 1000,
             source: row.source, timing: row.timing, policy: row.policy, start: start === null ? null : Math.floor(start / 1000),
-            deadline: Math.floor(deadline / 1000), start_automation: row.start_automation, stop_automation: row.stop_automation,
+            deadline: Math.floor(deadline / 1000), ...(row.not_before ? { not_before: row.not_before, earliest: Math.floor(row.earliest / 1000) } : {}), start_automation: row.start_automation, stop_automation: row.stop_automation,
           },
         });
       }
@@ -1701,7 +1750,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
       const days = rule.days.length === 7 ? "Every day" : [...rule.days].sort((a, b) => a - b)
         .map(day => weekdays[day].slice(0, 3)).join(", ");
       detail.textContent = days + " · " +
-        "Finish by " + rule.finish_by + " · " + entry.approval.duration / 60 + " min";
+        (rule.not_before ? "Not before " + rule.not_before + " · " : "") + "Finish by " + rule.finish_by + " · " + entry.approval.duration / 60 + " min";
       summary.append(title, detail);
       item.append(summary);
       if (admin) {
@@ -1752,6 +1801,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           [job.note, "Finish by " + job.search.finish_by + " each day · Looking " + limit].filter(Boolean).join(" ") :
           job.note;
       }
+      if (job.not_before || job.search?.not_before) time.textContent += " · Not before " + (job.not_before || job.search.not_before);
       summary.append(title, time, note);
       if (job.source_warning && job.status !== "cancelled") {
         const warning = document.createElement("div");
@@ -1837,6 +1887,7 @@ class EmFlexibleLoadSchedulerCard extends HTMLElement {
           detail.append(amount);
         }
         warningText = preferenceWarning(row, number);
+        if (row.not_before) time.title = "Earliest allowed start: " + row.not_before;
         item.append(time);
       } else {
         item.dataset.source = "unplaced";
