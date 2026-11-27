@@ -23,18 +23,12 @@ MAX_PROFILES = 20
 PROFILE_DIRECTORY = Path(".energy_manager/layout_profiles")
 
 
-
 def _default_state() -> dict:
     return {"version": 7, "revision": 0, "active_profile": "everyday",
             "profiles": {"everyday": {"name": "Everyday", "cards": {}}}}
 
 
 def _load_bundled_profiles(path: Path, data: dict) -> tuple[dict, bool]:
-    """Seed bundled JSON profiles once; never replace a user's edited profile.
-
-    JSON files are read from /config/.energy_manager/layout_profiles/. A newly
-    deployed file is introduced as a profile. Bundled IDs are stable filenames.
-    """
     folder = path.parent / "layout_profiles"
     if not folder.is_dir():
         return data, False
@@ -56,7 +50,7 @@ def _load_bundled_profiles(path: Path, data: dict) -> tuple[dict, bool]:
         if not isinstance(template, dict):
             raise ValueError(f"Invalid bundled profile: {f.name}")
         cards = template.get("cards")
-        # Accept the existing Export Layout JSON format unchanged.
+
         if not isinstance(cards, dict):
             raise ValueError(f"No cards object in bundled profile: {f.name}")
         cards = _sanitize_cards(cards)
@@ -65,7 +59,7 @@ def _load_bundled_profiles(path: Path, data: dict) -> tuple[dict, bool]:
             raise ValueError(f"Invalid profile name in {f.name}")
         if len(profiles) >= MAX_PROFILES and key not in profiles:
             raise ValueError("Too many bundled profiles")
-        # Avoid silently overwriting a user-created profile with a matching ID.
+
         if key not in profiles:
             profiles[key] = {"name": name.strip(), "cards": cards}
             changed = True
@@ -219,8 +213,7 @@ async def ws_save(hass, connection, msg):
             if msg.get("profile_id", data["active_profile"]) != data["active_profile"]:
                 connection.send_error(msg["id"], "conflict", "Active profile changed. Reload and retry.")
                 return
-            # Retain orphaned IDs from cards temporarily removed in newer YAML.
-            # A card returning later can recover its previous position/visibility.
+
             previous = data["profiles"][data["active_profile"]]["cards"]
             previous.update(cards)
             data["profiles"][data["active_profile"]]["cards"] = previous
@@ -262,8 +255,6 @@ async def ws_profile(hass, connection, msg):
                     raise ValueError("Maximum number of profiles reached")
                 if any(p["name"].casefold() == name.casefold() for p in profiles.values()):
                     raise ValueError("Profile name already exists")
-                # The UI supplies the current, fully resolved layout so YAML defaults
-                # and unsaved overrides are faithfully copied into the new profile.
                 cards = _sanitize_cards(msg.get("cards", profiles[data["active_profile"]]["cards"]))
                 idx = 1
                 while f"profile-{idx}" in profiles:
@@ -309,12 +300,6 @@ async def ws_profile(hass, connection, msg):
 })
 @websocket_api.async_response
 async def ws_sync(hass, connection, msg):
-    """Idempotently reconcile YAML card IDs against every saved named profile.
-
-    New cards append to their configured column so existing customised positions
-    never shift. Removed cards stay as dormant entries. Renames are explicitly
-    opt-in through em_previous_ids / em_previous_id in card view_layout.
-    """
     if not connection.user.is_admin:
         connection.send_error(msg["id"], "unauthorized", "Administrator access required")
         return
@@ -373,15 +358,11 @@ async def ws_sync(hass, connection, msg):
                     old_id = next((a for a in spec["aliases"] if a in cards), None)
                     if old_id:
                         cards[cid] = cards.pop(old_id)
-                        # A renamed card keeps its saved position, width and visibility.
                         changed = True
                     else:
-                        # Append new cards to avoid moving any existing custom positions.
                         last = max((int(c.get("order", -1)) for c in cards.values()
                                     if isinstance(c, dict) and c.get("col") == spec["col"]
                                     and isinstance(c.get("order"), int)), default=-1)
-                        # There is no need to materialise every YAML default on first setup.
-                        # Only add a newly appearing card once other saved cards exist.
                         if cards:
                             cards[cid] = {"col": spec["col"], "order": min(1000, last+1),
                                           "width": spec["width"],
