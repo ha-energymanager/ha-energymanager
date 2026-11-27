@@ -18,7 +18,7 @@ Energy Manager v2.1.0 introduces support for FoxESS inverters, allowing users to
 
 ## PV Dashboard framework update
 
-The customisable PV Dashboard framework has been updated. Tabs now replace profiles (existing profiles will be converted to tabs), with up to eight being able to be created. Now individual logins to Home Assistant will get to create their very own set of dashboards.
+The customisable PV Dashboard framework has been updated. Tabs now replace profiles (existing profiles will be converted to tabs), with up to eight being able to be created. Now individual logins to Home Assistant will get to create their very own set of dashboards. Each dashboard that you create can now support between 1 to 8 columns, definable by yourself.
 
 Optimisations have also been made to reduce the resource requirements of the customisable dashboard.
 
